@@ -39,6 +39,23 @@ class EventMarker:
     created_at_utc: datetime | None = None
 
 
+@dataclass(frozen=True)
+class CorrelationFinding:
+    x_metric: str
+    y_metric: str
+    transform: str
+    lag_seconds: int
+    discovery_rho: float
+    holdout_rho: float
+    corrected_q: float
+    stability: float
+    overlap_count: int
+    first_seen_utc: datetime
+    last_verified_utc: datetime
+    status: str
+    evidence: dict
+
+
 def connect(db_path: str | Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     path = Path(db_path)
     if str(path) != ":memory:":
@@ -88,6 +105,26 @@ def init_db(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS correlation_findings (
+            finding_id INTEGER PRIMARY KEY,
+            x_metric TEXT NOT NULL,
+            y_metric TEXT NOT NULL,
+            transform TEXT NOT NULL,
+            lag_seconds INTEGER NOT NULL,
+            discovery_rho REAL NOT NULL,
+            holdout_rho REAL NOT NULL,
+            corrected_q REAL NOT NULL,
+            stability REAL NOT NULL,
+            overlap_count INTEGER NOT NULL,
+            first_seen_utc TEXT NOT NULL,
+            last_verified_utc TEXT NOT NULL,
+            status TEXT NOT NULL,
+            evidence_json TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE INDEX IF NOT EXISTS idx_measurements_metric_timestamp
         ON measurements(metric, timestamp_utc)
         """
@@ -115,6 +152,18 @@ def init_db(conn: sqlite3.Connection) -> None:
         """
         CREATE INDEX IF NOT EXISTS idx_events_timestamp
         ON events(timestamp_utc)
+        """
+    )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_correlation_findings_identity
+        ON correlation_findings(x_metric, y_metric, transform)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_correlation_findings_status
+        ON correlation_findings(status, last_verified_utc)
         """
     )
     conn.commit()
@@ -216,6 +265,96 @@ def fetch_event_markers(conn: sqlite3.Connection, limit: int | None = 20) -> lis
             LIMIT ?
             """,
             (limit,),
+        )
+    )
+
+
+def upsert_correlation_findings(
+    conn: sqlite3.Connection,
+    findings: Iterable[CorrelationFinding],
+) -> int:
+    count = 0
+    for finding in findings:
+        evidence_json = json.dumps(finding.evidence, sort_keys=True, separators=(",", ":"))
+        conn.execute(
+            """
+            INSERT INTO correlation_findings (
+                x_metric,
+                y_metric,
+                transform,
+                lag_seconds,
+                discovery_rho,
+                holdout_rho,
+                corrected_q,
+                stability,
+                overlap_count,
+                first_seen_utc,
+                last_verified_utc,
+                status,
+                evidence_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(x_metric, y_metric, transform) DO UPDATE SET
+                lag_seconds = excluded.lag_seconds,
+                discovery_rho = excluded.discovery_rho,
+                holdout_rho = excluded.holdout_rho,
+                corrected_q = excluded.corrected_q,
+                stability = excluded.stability,
+                overlap_count = excluded.overlap_count,
+                last_verified_utc = excluded.last_verified_utc,
+                status = excluded.status,
+                evidence_json = excluded.evidence_json
+            """,
+            (
+                finding.x_metric,
+                finding.y_metric,
+                finding.transform,
+                int(finding.lag_seconds),
+                float(finding.discovery_rho),
+                float(finding.holdout_rho),
+                float(finding.corrected_q),
+                float(finding.stability),
+                int(finding.overlap_count),
+                to_utc_iso(finding.first_seen_utc),
+                to_utc_iso(finding.last_verified_utc),
+                finding.status,
+                evidence_json,
+            ),
+        )
+        count += 1
+    conn.commit()
+    return count
+
+
+def fetch_correlation_findings(
+    conn: sqlite3.Connection,
+    *,
+    status: str | None = None,
+) -> list[sqlite3.Row]:
+    if status is None:
+        return list(
+            conn.execute(
+                """
+                SELECT finding_id, x_metric, y_metric, transform, lag_seconds,
+                       discovery_rho, holdout_rho, corrected_q, stability,
+                       overlap_count, first_seen_utc, last_verified_utc,
+                       status, evidence_json
+                FROM correlation_findings
+                ORDER BY corrected_q ASC, ABS(holdout_rho) DESC, finding_id ASC
+                """
+            )
+        )
+    return list(
+        conn.execute(
+            """
+            SELECT finding_id, x_metric, y_metric, transform, lag_seconds,
+                   discovery_rho, holdout_rho, corrected_q, stability,
+                   overlap_count, first_seen_utc, last_verified_utc,
+                   status, evidence_json
+            FROM correlation_findings
+            WHERE status = ?
+            ORDER BY corrected_q ASC, ABS(holdout_rho) DESC, finding_id ASC
+            """,
+            (status,),
         )
     )
 

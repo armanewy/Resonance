@@ -88,7 +88,7 @@ def test_analyze_pair_reports_insufficient_data_without_persisting_findings(tmp_
         }
     finally:
         conn.close()
-    assert tables == {"collector_errors", "events", "measurements"}
+    assert tables == {"collector_errors", "correlation_findings", "events", "measurements"}
 
 
 def test_analyze_pair_cli_emits_json(tmp_path) -> None:

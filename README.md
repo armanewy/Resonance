@@ -2,7 +2,7 @@
 
 Resonance is a compact local-only prototype that collects personal computer/network signals plus local Open-Meteo weather observations, stores them in SQLite, and renders time-series graphs in Streamlit.
 
-It does not do correlation discovery, alerts, accounts, cloud deployment, or background OS service installation.
+It does not do alerts, accounts, cloud deployment, or background OS service installation.
 
 ## Setup
 
@@ -101,6 +101,16 @@ python -m resonance.analyze_pair --x tcp_latency_ms --y cpu_percent --hours 24 -
 ```
 
 The command reports association only; it does not establish causation. Use `--json` for machine-readable output.
+
+## Conservative Correlation Scan
+
+Scan eligible metric pairs locally with strict promotion thresholds. Dry runs do not write findings, and scans are silent when nothing passes:
+
+```powershell
+python -m resonance.scan --hours 168 --dry-run
+```
+
+Promoted findings, when any pass, are stored in SQLite as association evidence only.
 
 ## Synthetic Scenarios
 
