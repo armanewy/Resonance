@@ -8,6 +8,11 @@ from resonance.analysis.contracts import (
     PairAnalysis,
     ValidationResult,
 )
+from resonance.analysis.validation import (
+    chronological_holdout_validation,
+    max_lag_block_permutation_test,
+    window_stability,
+)
 
 __all__ = [
     "ALIGNED_PAIR_COLUMNS",
@@ -16,4 +21,7 @@ __all__ = [
     "LagScanResult",
     "PairAnalysis",
     "ValidationResult",
+    "chronological_holdout_validation",
+    "max_lag_block_permutation_test",
+    "window_stability",
 ]
