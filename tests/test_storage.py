@@ -5,13 +5,16 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from resonance.storage import (
+    CorrelationFinding,
     EventMarker,
     Measurement,
+    fetch_correlation_findings,
     fetch_event_markers,
     fetch_measurements,
     init_db,
     insert_event_marker,
     insert_measurements,
+    upsert_correlation_findings,
     sample_counts_by_metric,
 )
 
@@ -76,4 +79,53 @@ def test_event_marker_requires_label(sqlite_conn) -> None:
 
     with pytest.raises(ValueError, match="label is required"):
         insert_event_marker(sqlite_conn, EventMarker(now, " "))
+
+
+def test_correlation_finding_upsert_updates_existing_identity(sqlite_conn) -> None:
+    first_seen = datetime(2026, 6, 19, 12, 0, tzinfo=timezone.utc)
+    verified = first_seen + timedelta(minutes=5)
+    finding = CorrelationFinding(
+        x_metric="cpu_percent",
+        y_metric="tcp_latency_ms",
+        transform="first_difference",
+        lag_seconds=-900,
+        discovery_rho=0.91,
+        holdout_rho=0.72,
+        corrected_q=0.005,
+        stability=1.0,
+        overlap_count=80,
+        first_seen_utc=first_seen,
+        last_verified_utc=first_seen,
+        status="active",
+        evidence={"selected_on": "first_70_percent"},
+    )
+
+    assert upsert_correlation_findings(sqlite_conn, [finding]) == 1
+    first_rows = fetch_correlation_findings(sqlite_conn)
+    assert len(first_rows) == 1
+
+    updated = CorrelationFinding(
+        x_metric=finding.x_metric,
+        y_metric=finding.y_metric,
+        transform=finding.transform,
+        lag_seconds=-600,
+        discovery_rho=0.88,
+        holdout_rho=0.69,
+        corrected_q=0.004,
+        stability=0.75,
+        overlap_count=76,
+        first_seen_utc=verified,
+        last_verified_utc=verified,
+        status="active",
+        evidence={"selected_on": "first_70_percent", "updated": True},
+    )
+
+    assert upsert_correlation_findings(sqlite_conn, [updated]) == 1
+    rows = fetch_correlation_findings(sqlite_conn)
+
+    assert len(rows) == 1
+    assert rows[0]["finding_id"] == first_rows[0]["finding_id"]
+    assert rows[0]["lag_seconds"] == -600
+    assert rows[0]["first_seen_utc"] == "2026-06-19T12:00:00Z"
+    assert rows[0]["last_verified_utc"] == "2026-06-19T12:05:00Z"
 
