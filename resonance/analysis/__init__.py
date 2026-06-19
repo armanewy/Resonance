@@ -8,6 +8,15 @@ from resonance.analysis.contracts import (
     PairAnalysis,
     ValidationResult,
 )
+from resonance.analysis.alignment import align_series
+from resonance.analysis.transforms import (
+    TRANSFORMS,
+    apply_transform,
+    calendar_residual,
+    first_difference,
+    raw,
+    rolling_robust_zscore,
+)
 
 __all__ = [
     "ALIGNED_PAIR_COLUMNS",
@@ -16,4 +25,11 @@ __all__ = [
     "LagScanResult",
     "PairAnalysis",
     "ValidationResult",
+    "TRANSFORMS",
+    "align_series",
+    "apply_transform",
+    "calendar_residual",
+    "first_difference",
+    "raw",
+    "rolling_robust_zscore",
 ]
