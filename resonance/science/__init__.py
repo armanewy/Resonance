@@ -19,6 +19,8 @@ from resonance.science.contracts import (
     expression_metrics,
     expression_node_count,
     expression_parameters,
+    metric_catalog_id,
+    metric_catalog_names,
     stable_hash,
 )
 
@@ -41,5 +43,7 @@ __all__ = [
     "expression_metrics",
     "expression_node_count",
     "expression_parameters",
+    "metric_catalog_id",
+    "metric_catalog_names",
     "stable_hash",
 ]
