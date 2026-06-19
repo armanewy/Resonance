@@ -1,4 +1,4 @@
-"""Contracts for pairwise time-series analysis."""
+"""Contracts and helpers for pairwise time-series analysis."""
 
 from resonance.analysis.contracts import (
     ALIGNED_PAIR_COLUMNS,
@@ -9,6 +9,7 @@ from resonance.analysis.contracts import (
     ValidationResult,
 )
 from resonance.analysis.alignment import align_series
+from resonance.analysis.correlation import lagged_spearman
 from resonance.analysis.transforms import (
     TRANSFORMS,
     apply_transform,
@@ -30,6 +31,7 @@ __all__ = [
     "apply_transform",
     "calendar_residual",
     "first_difference",
+    "lagged_spearman",
     "raw",
     "rolling_robust_zscore",
 ]
