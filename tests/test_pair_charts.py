@@ -79,15 +79,6 @@ def test_stability_chart_plots_windows_and_zero_reference() -> None:
     assert any(shape.type == "line" and shape.y0 == 0 and shape.y1 == 0 for shape in fig.layout.shapes)
 
 
-def test_chart_functions_accept_typed_components() -> None:
-    analysis = _analysis()
-
-    assert len(aligned_transformed_timeline(analysis.aligned_pair, transform_name="first_difference", lag_steps=2).data) == 2
-    assert len(lag_profile(analysis.lag_result).data) == 2
-    assert len(lagged_scatter(analysis.aligned_pair, analysis.lag_result, transform_name="first_difference").data) == 1
-    assert len(stability_chart(analysis.validation_result).data) == 1
-
-
 def _analysis() -> PairAnalysis:
     frame = (
         {"timestamp_utc": _ts(0), "x": 1.0, "y": 10.0},

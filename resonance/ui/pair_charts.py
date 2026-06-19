@@ -7,24 +7,18 @@ from typing import Any
 
 import plotly.graph_objects as go
 
-from resonance.analysis.contracts import AlignedPair, LagScanResult, PairAnalysis, ValidationResult
+from resonance.analysis.contracts import PairAnalysis
 
 
 def aligned_transformed_timeline(
-    source: PairAnalysis | AlignedPair,
-    *,
-    transform_name: str | None = None,
-    lag_steps: int | None = None,
-    lag_seconds: int | None = None,
+    source: PairAnalysis,
 ) -> go.Figure:
     """Plot X and Y shifted onto the selected lag without filling missing values."""
 
-    aligned_pair, resolved_transform, resolved_lag_steps, resolved_lag_seconds = _timeline_inputs(
-        source,
-        transform_name=transform_name,
-        lag_steps=lag_steps,
-        lag_seconds=lag_seconds,
-    )
+    aligned_pair = source.aligned_pair
+    resolved_transform = source.transform_name
+    resolved_lag_steps = source.lag_result.best_lag_steps
+    resolved_lag_seconds = source.lag_result.best_lag_seconds
     rows = _coerce_rows(aligned_pair.frame)
     timestamps = [row.get("timestamp_utc") for row in rows]
     x_values = [_optional_float(row.get("x")) for row in rows]
@@ -61,10 +55,10 @@ def aligned_transformed_timeline(
     return fig
 
 
-def lag_profile(source: PairAnalysis | LagScanResult) -> go.Figure:
+def lag_profile(source: PairAnalysis) -> go.Figure:
     """Plot scanned lag scores and mark the selected lag."""
 
-    lag_result = source.lag_result if isinstance(source, PairAnalysis) else source
+    lag_result = source.lag_result
     scores = sorted(lag_result.scores, key=lambda score: _numeric(score.get("lag_seconds"), 0.0))
     x_values = [_numeric(score.get("lag_seconds"), 0.0) / 60 for score in scores]
     y_values = [_optional_float(score.get("rho")) for score in scores]
@@ -108,24 +102,15 @@ def lag_profile(source: PairAnalysis | LagScanResult) -> go.Figure:
 
 
 def lagged_scatter(
-    source: PairAnalysis | AlignedPair,
-    lag_result: LagScanResult | None = None,
-    *,
-    transform_name: str | None = None,
-    lag_steps: int | None = None,
-    lag_seconds: int | None = None,
+    source: PairAnalysis,
 ) -> go.Figure:
     """Plot X(t) against Y(t + selected lag) with paired timestamps in hover data."""
 
-    aligned_pair, resolved_transform, resolved_lag_result, resolved_lag_steps, resolved_lag_seconds = (
-        _scatter_inputs(
-            source,
-            lag_result=lag_result,
-            transform_name=transform_name,
-            lag_steps=lag_steps,
-            lag_seconds=lag_seconds,
-        )
-    )
+    aligned_pair = source.aligned_pair
+    resolved_transform = source.transform_name
+    resolved_lag_result = source.lag_result
+    resolved_lag_steps = source.lag_result.best_lag_steps
+    resolved_lag_seconds = source.lag_result.best_lag_seconds
     rows = _coerce_rows(aligned_pair.frame)
     pairs = _lagged_pairs(rows, resolved_lag_steps)
     best_score = _score_for_lag(resolved_lag_result.scores, resolved_lag_steps) if resolved_lag_result else None
@@ -165,10 +150,10 @@ def lagged_scatter(
     return fig
 
 
-def stability_chart(source: PairAnalysis | ValidationResult) -> go.Figure:
+def stability_chart(source: PairAnalysis) -> go.Figure:
     """Plot chronological window correlations for the selected lag."""
 
-    validation_result = source.validation_result if isinstance(source, PairAnalysis) else source
+    validation_result = source.validation_result
     scores = tuple(validation_result.window_scores)
     labels = [_window_label(score, index) for index, score in enumerate(scores)]
     y_values = [_optional_float(score.get("rho")) for score in scores]
@@ -193,55 +178,6 @@ def stability_chart(source: PairAnalysis | ValidationResult) -> go.Figure:
         yaxis_title="Spearman rho",
     )
     return fig
-
-
-def _timeline_inputs(
-    source: PairAnalysis | AlignedPair,
-    *,
-    transform_name: str | None,
-    lag_steps: int | None,
-    lag_seconds: int | None,
-) -> tuple[AlignedPair, str, int, int]:
-    if isinstance(source, PairAnalysis):
-        return (
-            source.aligned_pair,
-            source.transform_name,
-            source.lag_result.best_lag_steps,
-            source.lag_result.best_lag_seconds,
-        )
-    if lag_steps is None:
-        raise ValueError("lag_steps is required when source is an AlignedPair")
-    resolved_lag_seconds = lag_seconds if lag_seconds is not None else lag_steps * source.cadence_seconds
-    return source, transform_name or "transformed", lag_steps, resolved_lag_seconds
-
-
-def _scatter_inputs(
-    source: PairAnalysis | AlignedPair,
-    *,
-    lag_result: LagScanResult | None,
-    transform_name: str | None,
-    lag_steps: int | None,
-    lag_seconds: int | None,
-) -> tuple[AlignedPair, str, LagScanResult | None, int, int]:
-    if isinstance(source, PairAnalysis):
-        return (
-            source.aligned_pair,
-            source.transform_name,
-            source.lag_result,
-            source.lag_result.best_lag_steps,
-            source.lag_result.best_lag_seconds,
-        )
-    resolved_lag_steps = lag_steps if lag_steps is not None else lag_result.best_lag_steps if lag_result else None
-    if resolved_lag_steps is None:
-        raise ValueError("lag_steps or lag_result is required when source is an AlignedPair")
-    resolved_lag_seconds = (
-        lag_seconds
-        if lag_seconds is not None
-        else lag_result.best_lag_seconds
-        if lag_result
-        else resolved_lag_steps * source.cadence_seconds
-    )
-    return source, transform_name or "transformed", lag_result, resolved_lag_steps, resolved_lag_seconds
 
 
 def _coerce_rows(frame: Any) -> tuple[Mapping[str, Any], ...]:

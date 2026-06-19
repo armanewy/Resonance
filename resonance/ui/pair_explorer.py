@@ -113,31 +113,20 @@ def evidence_metrics(analysis: PairAnalysis) -> dict[str, str]:
 
 def evidence_statement(analysis: PairAnalysis) -> str:
     lag = analysis.lag_result
-    validation = analysis.validation_result
     if not _has_sufficient_evidence(analysis):
         return "Insufficient evidence for a stable association in this interval."
-    if lag.best_lag_seconds > 0:
-        return (
-            f"Association: {analysis.aligned_pair.x_metric} leads "
-            f"{analysis.aligned_pair.y_metric} by {_format_duration(lag.best_lag_seconds)}."
-        )
-    if lag.best_lag_seconds < 0:
-        return (
-            f"Association: {analysis.aligned_pair.x_metric} follows "
-            f"{analysis.aligned_pair.y_metric} by {_format_duration(abs(lag.best_lag_seconds))}."
-        )
     return (
         f"Association: {analysis.aligned_pair.x_metric} and "
-        f"{analysis.aligned_pair.y_metric} align at 0 seconds."
+        f"{analysis.aligned_pair.y_metric} align at {best_lag_label(lag.best_lag_seconds)}."
     )
 
 
 def best_lag_label(seconds: int) -> str:
     duration = _format_signed_duration(seconds)
     if seconds > 0:
-        return f"{duration} (X leads Y)"
+        return f"{duration} (positive lag)"
     if seconds < 0:
-        return f"{duration} (X follows Y)"
+        return f"{duration} (negative lag)"
     return duration
 
 
