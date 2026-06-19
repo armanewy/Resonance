@@ -64,6 +64,18 @@ Remove demo data:
 python -m resonance.seed_demo --clear
 ```
 
+Run the data audit:
+
+```powershell
+python -m resonance.audit --hours 24
+```
+
+Generate a synthetic scenario:
+
+```powershell
+python -m resonance.synthetic --scenario strong_lag --output tmp\strong_lag.csv
+```
+
 Current passing baseline command:
 
 ```powershell

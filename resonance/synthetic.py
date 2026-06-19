@@ -10,6 +10,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from resonance.time_utils import ensure_utc, to_utc_iso
+
 
 DEFAULT_SEED = 20260619
 DEFAULT_SAMPLE_INTERVAL_SECONDS = 300
@@ -61,7 +63,7 @@ def generate_synthetic_series(
     sample_count = int(duration_hours * 3600 // sample_interval_seconds) + 1
     rng = random.Random(seed)
     timestamps = [
-        _ensure_utc(start_timestamp_utc) + timedelta(seconds=index * sample_interval_seconds)
+        ensure_utc(start_timestamp_utc) + timedelta(seconds=index * sample_interval_seconds)
         for index in range(sample_count)
     ]
 
@@ -110,7 +112,7 @@ def generate_synthetic_series(
         "sample_interval_seconds": sample_interval_seconds,
         "duration_hours": duration_hours,
         "noise": noise,
-        "start_timestamp_utc": _format_timestamp(_ensure_utc(start_timestamp_utc)),
+        "start_timestamp_utc": to_utc_iso(ensure_utc(start_timestamp_utc)),
         "row_count": sample_count,
         "columns": CSV_COLUMNS,
         "true_lag_seconds": true_lag_seconds,
@@ -129,7 +131,7 @@ def write_dataset_csv(dataset: SyntheticDataset, output_path: Path) -> None:
         for sample in dataset.samples:
             writer.writerow(
                 {
-                    "timestamp_utc": _format_timestamp(sample.timestamp_utc),
+                    "timestamp_utc": to_utc_iso(sample.timestamp_utc),
                     "x": _format_optional_float(sample.x),
                     "y": _format_optional_float(sample.y),
                     "scenario": sample.scenario,
@@ -327,16 +329,6 @@ def _ar1_values(sample_count: int, rng: random.Random, innovation_scale: float, 
         value = phi * value + rng.gauss(0, innovation_scale)
         values.append(value)
     return values
-
-
-def _ensure_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
-
-
-def _format_timestamp(value: datetime) -> str:
-    return _ensure_utc(value).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _format_optional_float(value: float | None) -> str:
