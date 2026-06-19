@@ -118,6 +118,19 @@ Run the scanner continuously as a separate local process. It defaults to one sca
 python -m resonance.watch
 ```
 
+## Scientific Snapshots
+
+Freeze a reproducible, sealed scientific dataset snapshot from the local SQLite measurements:
+
+```powershell
+python -m resonance.science.snapshot_cli create --hours 720 --metrics tcp_latency_ms,dns_latency_ms,cpu_percent --max-lag-seconds 3600
+```
+
+Snapshots are written as content-addressed artifacts under `data/science/artifacts/sha256/`.
+Rows are normalized to UTC, sorted deterministically, and split chronologically into exploration,
+tuning, and blind partitions with an embargo around each split boundary. Missing metric
+observations are left missing; no forward filling is applied.
+
 ## Synthetic Scenarios
 
 Generate a deterministic synthetic time-series scenario:
