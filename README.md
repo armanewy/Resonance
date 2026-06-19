@@ -92,6 +92,16 @@ Emit JSON for scripts:
 python -m resonance.audit --hours 24 --json
 ```
 
+## Manual Pair Analysis
+
+Analyze one requested metric pair from the local SQLite database without saving findings or scanning every pair:
+
+```powershell
+python -m resonance.analyze_pair --x tcp_latency_ms --y cpu_percent --hours 24 --transform first_difference --max-lag-minutes 60
+```
+
+The command reports association only; it does not establish causation. Use `--json` for machine-readable output.
+
 ## Synthetic Scenarios
 
 Generate a deterministic synthetic time-series scenario:
