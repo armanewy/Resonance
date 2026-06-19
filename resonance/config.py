@@ -32,9 +32,23 @@ class CollectionConfig:
 
 
 @dataclass(frozen=True)
+class NotificationConfig:
+    enabled: bool
+    dry_run_stdout: bool
+    ntfy_endpoint: str
+    history_path: str
+    dashboard_url: str
+    discovery_cooldown_hours: int
+    finding_cooldown_hours: int
+    major_strengthening_threshold: float
+    request_timeout_seconds: int
+
+
+@dataclass(frozen=True)
 class AppConfig:
     location: LocationConfig
     collection: CollectionConfig
+    notifications: NotificationConfig
 
 
 def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> AppConfig:
@@ -48,6 +62,7 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> AppConfig:
 
     location = _require_table(raw, "location")
     collection = _require_table(raw, "collection")
+    notifications = _optional_table(raw, "notifications")
 
     name = _required_str(location, "location.name")
     latitude = _required_float(location, "location.latitude")
@@ -82,6 +97,57 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> AppConfig:
     if not dns_hostname.strip():
         raise ConfigError("collection.dns_test_hostname must not be blank")
 
+    notifications_enabled = _optional_bool(notifications, "notifications.enabled", False)
+    dry_run_stdout = _optional_bool(notifications, "notifications.dry_run_stdout", True)
+    ntfy_endpoint = _optional_str(notifications, "notifications.ntfy_endpoint", "")
+    history_path = _optional_str(
+        notifications,
+        "notifications.history_path",
+        "data/notification_history.json",
+    )
+    dashboard_url = _optional_str(
+        notifications,
+        "notifications.dashboard_url",
+        "http://127.0.0.1:8501",
+    )
+    discovery_cooldown_hours = _optional_int(
+        notifications,
+        "notifications.discovery_cooldown_hours",
+        24,
+    )
+    finding_cooldown_hours = _optional_int(
+        notifications,
+        "notifications.finding_cooldown_hours",
+        24,
+    )
+    major_strengthening_threshold = _optional_float(
+        notifications,
+        "notifications.major_strengthening_threshold",
+        0.20,
+    )
+    request_timeout_seconds = _optional_int(
+        notifications,
+        "notifications.request_timeout_seconds",
+        5,
+    )
+
+    if ntfy_endpoint and not (
+        ntfy_endpoint.startswith("http://") or ntfy_endpoint.startswith("https://")
+    ):
+        raise ConfigError("notifications.ntfy_endpoint must start with http:// or https://")
+    if not history_path.strip():
+        raise ConfigError("notifications.history_path must not be blank")
+    if not dashboard_url.strip():
+        raise ConfigError("notifications.dashboard_url must not be blank")
+    if discovery_cooldown_hours <= 0:
+        raise ConfigError("notifications.discovery_cooldown_hours must be positive")
+    if finding_cooldown_hours <= 0:
+        raise ConfigError("notifications.finding_cooldown_hours must be positive")
+    if not 0 <= major_strengthening_threshold <= 2:
+        raise ConfigError("notifications.major_strengthening_threshold must be between 0 and 2")
+    if request_timeout_seconds <= 0:
+        raise ConfigError("notifications.request_timeout_seconds must be positive")
+
     return AppConfig(
         location=LocationConfig(
             name=name,
@@ -97,6 +163,17 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> AppConfig:
             dns_test_hostname=dns_hostname,
             router_host=router_host,
         ),
+        notifications=NotificationConfig(
+            enabled=notifications_enabled,
+            dry_run_stdout=dry_run_stdout,
+            ntfy_endpoint=ntfy_endpoint,
+            history_path=history_path,
+            dashboard_url=dashboard_url,
+            discovery_cooldown_hours=discovery_cooldown_hours,
+            finding_cooldown_hours=finding_cooldown_hours,
+            major_strengthening_threshold=major_strengthening_threshold,
+            request_timeout_seconds=request_timeout_seconds,
+        ),
     )
 
 
@@ -104,6 +181,13 @@ def _require_table(raw: dict, key: str) -> dict:
     value = raw.get(key)
     if not isinstance(value, dict):
         raise ConfigError(f"Missing required [{key}] table")
+    return value
+
+
+def _optional_table(raw: dict, key: str) -> dict:
+    value = raw.get(key, {})
+    if not isinstance(value, dict):
+        raise ConfigError(f"[{key}] must be a table")
     return value
 
 
@@ -123,6 +207,14 @@ def _optional_str(table: dict, dotted_key: str, default: str) -> str:
     return value
 
 
+def _optional_bool(table: dict, dotted_key: str, default: bool) -> bool:
+    key = dotted_key.split(".")[-1]
+    value = table.get(key, default)
+    if not isinstance(value, bool):
+        raise ConfigError(f"{dotted_key} must be a boolean")
+    return value
+
+
 def _required_float(table: dict, dotted_key: str) -> float:
     key = dotted_key.split(".")[-1]
     value = table.get(key)
@@ -131,9 +223,25 @@ def _required_float(table: dict, dotted_key: str) -> float:
     return float(value)
 
 
+def _optional_float(table: dict, dotted_key: str, default: float) -> float:
+    key = dotted_key.split(".")[-1]
+    value = table.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ConfigError(f"{dotted_key} must be a number")
+    return float(value)
+
+
 def _required_int(table: dict, dotted_key: str) -> int:
     key = dotted_key.split(".")[-1]
     value = table.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(f"{dotted_key} must be an integer")
+    return value
+
+
+def _optional_int(table: dict, dotted_key: str, default: int) -> int:
+    key = dotted_key.split(".")[-1]
+    value = table.get(key, default)
     if isinstance(value, bool) or not isinstance(value, int):
         raise ConfigError(f"{dotted_key} must be an integer")
     return value
