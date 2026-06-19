@@ -13,8 +13,11 @@ import streamlit as st
 from resonance.config import ConfigError, load_config
 from resonance.storage import (
     DEFAULT_DB_PATH,
-    connect,
+    EventMarker,
+    ensure_database,
+    fetch_event_markers,
     fetch_measurements,
+    insert_event_marker,
     latest_measurement_by_metric,
     latest_timestamp_by_source,
     recent_errors,
@@ -57,7 +60,7 @@ def main() -> None:
     selected = st.selectbox("Window", list(INTERVALS.keys()), index=1)
     start_utc = now_utc - INTERVALS[selected]
 
-    conn = connect(DEFAULT_DB_PATH)
+    conn = ensure_database(DEFAULT_DB_PATH)
     try:
         st.title("Resonance")
         header_cols = st.columns(4)
@@ -76,6 +79,7 @@ def main() -> None:
         df = _rows_to_dataframe(rows, local_tz)
 
         _current_cards(conn)
+        _render_event_markers(conn, local_tz)
         _render_connectivity(df)
         _render_utilization(df)
         _render_network(df)
@@ -105,6 +109,30 @@ def _current_cards(conn) -> None:
 
     for column, (label, row) in zip(columns, metrics.items()):
         column.metric(label, _format_value(float(row["value"]), row["unit"]), help=f"source: {row['source']}")
+
+
+def _render_event_markers(conn, local_tz: ZoneInfo) -> None:
+    st.subheader("Event markers")
+    with st.form("mark_event", clear_on_submit=True):
+        label_col, note_col, button_col = st.columns([2, 4, 1])
+        label = label_col.text_input("Label")
+        note = note_col.text_input("Note")
+        submitted = button_col.form_submit_button("Mark event now")
+    if submitted:
+        marked_at_utc = utc_now()
+        try:
+            insert_event_marker(conn, EventMarker(marked_at_utc, label, note, marked_at_utc))
+        except ValueError as exc:
+            st.error(str(exc))
+        else:
+            marked_at_local = marked_at_utc.astimezone(local_tz).strftime("%Y-%m-%d %H:%M:%S")
+            st.success(f"Event marked at {marked_at_local}.")
+
+    recent_events = _event_rows_to_dataframe(fetch_event_markers(conn, 20), local_tz)
+    st.dataframe(recent_events, use_container_width=True, hide_index=True)
+
+    event_csv = _event_rows_csv(fetch_event_markers(conn, None), local_tz)
+    st.download_button("Download events CSV", event_csv, "resonance_events.csv", "text/csv")
 
 
 def _render_connectivity(df: pd.DataFrame) -> None:
@@ -225,6 +253,22 @@ def _rows_to_dataframe(rows, local_tz: ZoneInfo) -> pd.DataFrame:
     return pd.DataFrame.from_records(records)
 
 
+def _event_rows_to_dataframe(rows, local_tz: ZoneInfo) -> pd.DataFrame:
+    records = []
+    for row in rows:
+        timestamp = parse_utc(row["timestamp_utc"]).astimezone(local_tz)
+        created_at = parse_utc(row["created_at_utc"]).astimezone(local_tz)
+        records.append(
+            {
+                "time": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                "label": row["label"],
+                "note": row["note"],
+                "created": created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        )
+    return pd.DataFrame.from_records(records, columns=["time", "label", "note", "created"])
+
+
 def _add_trace(
     fig,
     df: pd.DataFrame,
@@ -314,6 +358,38 @@ def _dataframe_csv(df: pd.DataFrame) -> bytes:
         return b""
     output = StringIO()
     df.drop(columns=["metadata"], errors="ignore").to_csv(output, index=False)
+    return output.getvalue().encode("utf-8")
+
+
+def _event_rows_csv(rows, local_tz: ZoneInfo) -> bytes:
+    records = []
+    for row in rows:
+        timestamp = parse_utc(row["timestamp_utc"]).astimezone(local_tz)
+        created_at = parse_utc(row["created_at_utc"]).astimezone(local_tz)
+        records.append(
+            {
+                "id": row["id"],
+                "timestamp_utc": row["timestamp_utc"],
+                "timestamp_local": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                "label": row["label"],
+                "note": row["note"],
+                "created_at_utc": row["created_at_utc"],
+                "created_at_local": created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+        )
+    output = StringIO()
+    pd.DataFrame.from_records(
+        records,
+        columns=[
+            "id",
+            "timestamp_utc",
+            "timestamp_local",
+            "label",
+            "note",
+            "created_at_utc",
+            "created_at_local",
+        ],
+    ).to_csv(output, index=False)
     return output.getvalue().encode("utf-8")
 
 
