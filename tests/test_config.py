@@ -31,6 +31,37 @@ def test_configuration_loading_and_validation(tmp_path) -> None:
     assert config.location.name == "Framingham, Massachusetts"
     assert config.location.latitude == 42.2793
     assert config.collection.tcp_test_port == 443
+    assert config.notifications.enabled is False
+    assert config.notifications.dry_run_stdout is True
+    assert config.notifications.discovery_cooldown_hours == 24
+
+
+def test_notification_configuration_loading(tmp_path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        VALID_CONFIG
+        + """
+[notifications]
+enabled = true
+dry_run_stdout = false
+ntfy_endpoint = "https://ntfy.example/resonance"
+history_path = "tmp/notification_history.json"
+dashboard_url = "http://127.0.0.1:8501"
+discovery_cooldown_hours = 12
+finding_cooldown_hours = 6
+major_strengthening_threshold = 0.3
+request_timeout_seconds = 2
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+
+    assert config.notifications.enabled is True
+    assert config.notifications.dry_run_stdout is False
+    assert config.notifications.ntfy_endpoint == "https://ntfy.example/resonance"
+    assert config.notifications.finding_cooldown_hours == 6
+    assert config.notifications.major_strengthening_threshold == 0.3
 
 
 def test_malformed_configuration_has_helpful_error(tmp_path) -> None:
@@ -38,5 +69,20 @@ def test_malformed_configuration_has_helpful_error(tmp_path) -> None:
     path.write_text(VALID_CONFIG.replace("tcp_test_port = 443", "tcp_test_port = 70000"), encoding="utf-8")
 
     with pytest.raises(ConfigError, match="tcp_test_port"):
+        load_config(path)
+
+
+def test_invalid_notification_endpoint_has_helpful_error(tmp_path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        VALID_CONFIG
+        + """
+[notifications]
+ntfy_endpoint = "ntfy.example/resonance"
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="notifications.ntfy_endpoint"):
         load_config(path)
 

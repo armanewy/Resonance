@@ -12,3 +12,14 @@ tcp_test_port = 443
 dns_test_hostname = "example.com"
 router_host = ""
 
+[notifications]
+enabled = false
+dry_run_stdout = true
+ntfy_endpoint = ""
+history_path = "data/notification_history.json"
+dashboard_url = "http://127.0.0.1:8501"
+discovery_cooldown_hours = 24
+finding_cooldown_hours = 24
+major_strengthening_threshold = 0.20
+request_timeout_seconds = 5
+
