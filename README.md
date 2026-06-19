@@ -112,6 +112,12 @@ python -m resonance.scan --hours 168 --dry-run
 
 Promoted findings, when any pass, are stored in SQLite as association evidence only.
 
+Run the scanner continuously as a separate local process. It defaults to one scan every six hours, applies finding lifecycle classification, and uses `[notifications]` when enabled:
+
+```powershell
+python -m resonance.watch
+```
+
 ## Synthetic Scenarios
 
 Generate a deterministic synthetic time-series scenario:
