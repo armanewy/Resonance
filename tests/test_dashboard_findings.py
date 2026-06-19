@@ -114,14 +114,13 @@ def _insert_lifecycle(sqlite_conn, finding: CorrelationFinding, status: str, *, 
             previous_status,
             status,
             failure_count,
-            missing_since_utc,
             discovery_rho,
             holdout_rho,
             corrected_q,
             stability,
             overlap_count,
             details_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event_id,
@@ -135,7 +134,6 @@ def _insert_lifecycle(sqlite_conn, finding: CorrelationFinding, status: str, *, 
             "verified",
             status,
             0,
-            None,
             finding.discovery_rho,
             finding.holdout_rho,
             finding.corrected_q,

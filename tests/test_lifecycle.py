@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from resonance.analysis.lifecycle import (
-    FindingIdentity,
     LifecycleOptions,
     fetch_lifecycle_events,
     update_finding_lifecycle,
@@ -99,39 +98,6 @@ def test_validation_failures_break_only_after_repeated_failures(sqlite_conn) -> 
     assert first_failure[0].failure_count == 1
     assert [event.status for event in second_failure] == ["broken"]
     assert second_failure[0].failure_count == 2
-
-
-def test_missing_data_expires_after_configured_period(sqlite_conn) -> None:
-    options = LifecycleOptions(expire_after=timedelta(hours=2))
-    finding = _finding()
-    identity = FindingIdentity(
-        x_metric=finding.x_metric,
-        y_metric=finding.y_metric,
-        transform=finding.transform,
-        lag_seconds=finding.lag_seconds,
-    )
-
-    update_finding_lifecycle(sqlite_conn, [finding], scan_utc=NOW, options=options)
-    missing = update_finding_lifecycle(
-        sqlite_conn,
-        [],
-        insufficient_data=[identity],
-        scan_utc=NOW + timedelta(hours=1),
-        options=options,
-    )
-    expired = update_finding_lifecycle(
-        sqlite_conn,
-        [],
-        insufficient_data=[identity],
-        scan_utc=NOW + timedelta(hours=3, minutes=1),
-        options=options,
-    )
-
-    assert [event.status for event in missing] == ["weakened"]
-    assert missing[0].failure_count == 0
-    assert missing[0].missing_since_utc == NOW + timedelta(hours=1)
-    assert [event.status for event in expired] == ["expired"]
-    assert expired[0].details["reason"] == "insufficient_data"
 
 
 def test_current_scan_recovers_broken_relationship(sqlite_conn) -> None:
