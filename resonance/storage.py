@@ -31,6 +31,14 @@ class CollectorError:
     message: str
 
 
+@dataclass(frozen=True)
+class EventMarker:
+    timestamp_utc: datetime
+    label: str
+    note: str = ""
+    created_at_utc: datetime | None = None
+
+
 def connect(db_path: str | Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     path = Path(db_path)
     if str(path) != ":memory:":
@@ -69,6 +77,17 @@ def init_db(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY,
+            timestamp_utc TEXT NOT NULL,
+            label TEXT NOT NULL,
+            note TEXT NOT NULL DEFAULT '',
+            created_at_utc TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE INDEX IF NOT EXISTS idx_measurements_metric_timestamp
         ON measurements(metric, timestamp_utc)
         """
@@ -90,6 +109,12 @@ def init_db(conn: sqlite3.Connection) -> None:
         """
         CREATE INDEX IF NOT EXISTS idx_collector_errors_timestamp
         ON collector_errors(timestamp_utc)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_events_timestamp
+        ON events(timestamp_utc)
         """
     )
     conn.commit()
@@ -152,6 +177,47 @@ def insert_collector_errors(conn: sqlite3.Connection, errors: Iterable[Collector
         count += 1
     conn.commit()
     return count
+
+
+def insert_event_marker(conn: sqlite3.Connection, event: EventMarker) -> int:
+    label = event.label.strip()
+    if not label:
+        raise ValueError("Event label is required.")
+    note = event.note.strip()
+    created_at_utc = event.created_at_utc or event.timestamp_utc
+    cursor = conn.execute(
+        """
+        INSERT INTO events (timestamp_utc, label, note, created_at_utc)
+        VALUES (?, ?, ?, ?)
+        """,
+        (to_utc_iso(event.timestamp_utc), label, note, to_utc_iso(created_at_utc)),
+    )
+    conn.commit()
+    return int(cursor.lastrowid)
+
+
+def fetch_event_markers(conn: sqlite3.Connection, limit: int | None = 20) -> list[sqlite3.Row]:
+    if limit is None:
+        return list(
+            conn.execute(
+                """
+                SELECT id, timestamp_utc, label, note, created_at_utc
+                FROM events
+                ORDER BY timestamp_utc DESC, id DESC
+                """
+            )
+        )
+    return list(
+        conn.execute(
+            """
+            SELECT id, timestamp_utc, label, note, created_at_utc
+            FROM events
+            ORDER BY timestamp_utc DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+    )
 
 
 def fetch_measurements(
