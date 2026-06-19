@@ -83,21 +83,21 @@ def test_evidence_metrics_and_statement_use_association_language() -> None:
 
     assert evidence_metrics(analysis) == {
         "Train rho": "0.81",
-        "Best lag": "+10 minutes (X leads Y)",
+        "Best lag": "+10 minutes (positive lag)",
         "Permutation p-value": "0.01",
         "Holdout rho": "0.77",
         "Stability": "1",
     }
     statement = evidence_statement(analysis)
-    assert statement == "Association: tcp_latency_ms leads cpu_percent by 10 minutes."
+    assert statement == "Association: tcp_latency_ms and cpu_percent align at +10 minutes (positive lag)."
     assert "cause" not in statement.lower()
 
 
-def test_negative_lag_statement_uses_follows_language() -> None:
+def test_negative_lag_statement_uses_signed_association_language() -> None:
     analysis = _analysis(best_lag_seconds=-300)
 
-    assert evidence_metrics(analysis)["Best lag"] == "-5 minutes (X follows Y)"
-    assert evidence_statement(analysis) == "Association: tcp_latency_ms follows cpu_percent by 5 minutes."
+    assert evidence_metrics(analysis)["Best lag"] == "-5 minutes (negative lag)"
+    assert evidence_statement(analysis) == "Association: tcp_latency_ms and cpu_percent align at -5 minutes (negative lag)."
 
 
 def test_insufficient_evidence_statement_is_allowed() -> None:
