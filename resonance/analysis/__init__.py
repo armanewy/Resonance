@@ -1,4 +1,4 @@
-"""Contracts for pairwise time-series analysis."""
+"""Contracts and helpers for pairwise time-series analysis."""
 
 from resonance.analysis.contracts import (
     ALIGNED_PAIR_COLUMNS,
@@ -8,6 +8,7 @@ from resonance.analysis.contracts import (
     PairAnalysis,
     ValidationResult,
 )
+from resonance.analysis.correlation import lagged_spearman
 
 __all__ = [
     "ALIGNED_PAIR_COLUMNS",
@@ -16,4 +17,5 @@ __all__ = [
     "LagScanResult",
     "PairAnalysis",
     "ValidationResult",
+    "lagged_spearman",
 ]
