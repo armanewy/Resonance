@@ -1,0 +1,1642 @@
+{
+  "$defs": {
+    "AbsoluteValueNode": {
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "discriminator": {
+            "mapping": {
+              "absolute_value": "#/$defs/AbsoluteValueNode",
+              "add": "#/$defs/AddNode",
+              "clip": "#/$defs/ClipNode",
+              "difference": "#/$defs/DifferenceNode",
+              "fitted_parameter": "#/$defs/FittedParameterNode",
+              "lag": "#/$defs/LagNode",
+              "metric": "#/$defs/MetricNode",
+              "multiply": "#/$defs/MultiplyNode",
+              "numeric_constant": "#/$defs/NumericConstantNode",
+              "robust_zscore": "#/$defs/RobustZscoreNode",
+              "rolling_mean": "#/$defs/RollingMeanNode",
+              "rolling_std": "#/$defs/RollingStdNode",
+              "safe_divide": "#/$defs/SafeDivideNode",
+              "subtract": "#/$defs/SubtractNode"
+            },
+            "propertyName": "node"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/MetricNode"
+            },
+            {
+              "$ref": "#/$defs/NumericConstantNode"
+            },
+            {
+              "$ref": "#/$defs/FittedParameterNode"
+            },
+            {
+              "$ref": "#/$defs/AddNode"
+            },
+            {
+              "$ref": "#/$defs/SubtractNode"
+            },
+            {
+              "$ref": "#/$defs/MultiplyNode"
+            },
+            {
+              "$ref": "#/$defs/SafeDivideNode"
+            },
+            {
+              "$ref": "#/$defs/AbsoluteValueNode"
+            },
+            {
+              "$ref": "#/$defs/ClipNode"
+            },
+            {
+              "$ref": "#/$defs/DifferenceNode"
+            },
+            {
+              "$ref": "#/$defs/LagNode"
+            },
+            {
+              "$ref": "#/$defs/RollingMeanNode"
+            },
+            {
+              "$ref": "#/$defs/RollingStdNode"
+            },
+            {
+              "$ref": "#/$defs/RobustZscoreNode"
+            }
+          ],
+          "title": "Input"
+        },
+        "node": {
+          "const": "absolute_value",
+          "title": "Node",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node",
+        "input"
+      ],
+      "title": "AbsoluteValueNode",
+      "type": "object"
+    },
+    "AddNode": {
+      "additionalProperties": false,
+      "properties": {
+        "left": {
+          "discriminator": {
+            "mapping": {
+              "absolute_value": "#/$defs/AbsoluteValueNode",
+              "add": "#/$defs/AddNode",
+              "clip": "#/$defs/ClipNode",
+              "difference": "#/$defs/DifferenceNode",
+              "fitted_parameter": "#/$defs/FittedParameterNode",
+              "lag": "#/$defs/LagNode",
+              "metric": "#/$defs/MetricNode",
+              "multiply": "#/$defs/MultiplyNode",
+              "numeric_constant": "#/$defs/NumericConstantNode",
+              "robust_zscore": "#/$defs/RobustZscoreNode",
+              "rolling_mean": "#/$defs/RollingMeanNode",
+              "rolling_std": "#/$defs/RollingStdNode",
+              "safe_divide": "#/$defs/SafeDivideNode",
+              "subtract": "#/$defs/SubtractNode"
+            },
+            "propertyName": "node"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/MetricNode"
+            },
+            {
+              "$ref": "#/$defs/NumericConstantNode"
+            },
+            {
+              "$ref": "#/$defs/FittedParameterNode"
+            },
+            {
+              "$ref": "#/$defs/AddNode"
+            },
+            {
+              "$ref": "#/$defs/SubtractNode"
+            },
+            {
+              "$ref": "#/$defs/MultiplyNode"
+            },
+            {
+              "$ref": "#/$defs/SafeDivideNode"
+            },
+            {
+              "$ref": "#/$defs/AbsoluteValueNode"
+            },
+            {
+              "$ref": "#/$defs/ClipNode"
+            },
+            {
+              "$ref": "#/$defs/DifferenceNode"
+            },
+            {
+              "$ref": "#/$defs/LagNode"
+            },
+            {
+              "$ref": "#/$defs/RollingMeanNode"
+            },
+            {
+              "$ref": "#/$defs/RollingStdNode"
+            },
+            {
+              "$ref": "#/$defs/RobustZscoreNode"
+            }
+          ],
+          "title": "Left"
+        },
+        "node": {
+          "const": "add",
+          "title": "Node",
+          "type": "string"
+        },
+        "right": {
+          "discriminator": {
+            "mapping": {
+              "absolute_value": "#/$defs/AbsoluteValueNode",
+              "add": "#/$defs/AddNode",
+              "clip": "#/$defs/ClipNode",
+              "difference": "#/$defs/DifferenceNode",
+              "fitted_parameter": "#/$defs/FittedParameterNode",
+              "lag": "#/$defs/LagNode",
+              "metric": "#/$defs/MetricNode",
+              "multiply": "#/$defs/MultiplyNode",
+              "numeric_constant": "#/$defs/NumericConstantNode",
+              "robust_zscore": "#/$defs/RobustZscoreNode",
+              "rolling_mean": "#/$defs/RollingMeanNode",
+              "rolling_std": "#/$defs/RollingStdNode",
+              "safe_divide": "#/$defs/SafeDivideNode",
+              "subtract": "#/$defs/SubtractNode"
+            },
+            "propertyName": "node"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/MetricNode"
+            },
+            {
+              "$ref": "#/$defs/NumericConstantNode"
+            },
+            {
+              "$ref": "#/$defs/FittedParameterNode"
+            },
+            {
+              "$ref": "#/$defs/AddNode"
+            },
+            {
+              "$ref": "#/$defs/SubtractNode"
+            },
+            {
+              "$ref": "#/$defs/MultiplyNode"
+            },
+            {
+              "$ref": "#/$defs/SafeDivideNode"
+            },
+            {
+              "$ref": "#/$defs/AbsoluteValueNode"
+            },
+            {
+              "$ref": "#/$defs/ClipNode"
+            },
+            {
+              "$ref": "#/$defs/DifferenceNode"
+            },
+            {
+              "$ref": "#/$defs/LagNode"
+            },
+            {
+              "$ref": "#/$defs/RollingMeanNode"
+            },
+            {
+              "$ref": "#/$defs/RollingStdNode"
+            },
+            {
+              "$ref": "#/$defs/RobustZscoreNode"
+            }
+          ],
+          "title": "Right"
+        }
+      },
+      "required": [
+        "node",
+        "left",
+        "right"
+      ],
+      "title": "AddNode",
+      "type": "object"
+    },
+    "ClipNode": {
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "discriminator": {
+            "mapping": {
+              "absolute_value": "#/$defs/AbsoluteValueNode",
+              "add": "#/$defs/AddNode",
+              "clip": "#/$defs/ClipNode",
+              "difference": "#/$defs/DifferenceNode",
+              "fitted_parameter": "#/$defs/FittedParameterNode",
+              "lag": "#/$defs/LagNode",
+              "metric": "#/$defs/MetricNode",
+              "multiply": "#/$defs/MultiplyNode",
+              "numeric_constant": "#/$defs/NumericConstantNode",
+              "robust_zscore": "#/$defs/RobustZscoreNode",
+              "rolling_mean": "#/$defs/RollingMeanNode",
+              "rolling_std": "#/$defs/RollingStdNode",
+              "safe_divide": "#/$defs/SafeDivideNode",
+              "subtract": "#/$defs/SubtractNode"
+            },
+            "propertyName": "node"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/MetricNode"
+            },
+            {
+              "$ref": "#/$defs/NumericConstantNode"
+            },
+            {
+              "$ref": "#/$defs/FittedParameterNode"
+            },
+            {
+              "$ref": "#/$defs/AddNode"
+            },
+            {
+              "$ref": "#/$defs/SubtractNode"
+            },
+            {
+              "$ref": "#/$defs/MultiplyNode"
+            },
+            {
+              "$ref": "#/$defs/SafeDivideNode"
+            },
+            {
+              "$ref": "#/$defs/AbsoluteValueNode"
+            },
+            {
+              "$ref": "#/$defs/ClipNode"
+            },
+            {
+              "$ref": "#/$defs/DifferenceNode"
+            },
+            {
+              "$ref": "#/$defs/LagNode"
+            },
+            {
+              "$ref": "#/$defs/RollingMeanNode"
+            },
+            {
+              "$ref": "#/$defs/RollingStdNode"
+            },
+            {
+              "$ref": "#/$defs/RobustZscoreNode"
+            }
+          ],
+          "title": "Input"
+        },
+        "maximum": {
+          "title": "Maximum",
+          "type": "number"
+        },
+        "minimum": {
+          "title": "Minimum",
+          "type": "number"
+        },
+        "node": {
+          "const": "clip",
+          "title": "Node",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node",
+        "input",
+        "minimum",
+        "maximum"
+      ],
+      "title": "ClipNode",
+      "type": "object"
+    },
+    "ComplexityBudget": {
+      "additionalProperties": false,
+      "properties": {
+        "max_ast_nodes": {
+          "default": 15,
+          "exclusiveMinimum": 0,
+          "title": "Max Ast Nodes",
+          "type": "integer"
+        },
+        "max_source_metrics": {
+          "default": 3,
+          "exclusiveMinimum": 0,
+          "maximum": 3,
+          "title": "Max Source Metrics",
+          "type": "integer"
+        }
+      },
+      "title": "ComplexityBudget",
+      "type": "object"
+    },
+    "DifferenceNode": {
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "discriminator": {
+            "mapping": {
+              "absolute_value": "#/$defs/AbsoluteValueNode",
+              "add": "#/$defs/AddNode",
+              "clip": "#/$defs/ClipNode",
+              "difference": "#/$defs/DifferenceNode",
+              "fitted_parameter": "#/$defs/FittedParameterNode",
+              "lag": "#/$defs/LagNode",
+              "metric": "#/$defs/MetricNode",
+              "multiply": "#/$defs/MultiplyNode",
+              "numeric_constant": "#/$defs/NumericConstantNode",
+              "robust_zscore": "#/$defs/RobustZscoreNode",
+              "rolling_mean": "#/$defs/RollingMeanNode",
+              "rolling_std": "#/$defs/RollingStdNode",
+              "safe_divide": "#/$defs/SafeDivideNode",
+              "subtract": "#/$defs/SubtractNode"
+            },
+            "propertyName": "node"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/MetricNode"
+            },
+            {
+              "$ref": "#/$defs/NumericConstantNode"
+            },
+            {
+              "$ref": "#/$defs/FittedParameterNode"
+            },
+            {
+              "$ref": "#/$defs/AddNode"
+            },
+            {
+              "$ref": "#/$defs/SubtractNode"
+            },
+            {
+              "$ref": "#/$defs/MultiplyNode"
+            },
+            {
+              "$ref": "#/$defs/SafeDivideNode"
+            },
+            {
+              "$ref": "#/$defs/AbsoluteValueNode"
+            },
+            {
+              "$ref": "#/$defs/ClipNode"
+            },
+            {
+              "$ref": "#/$defs/DifferenceNode"
+            },
+            {
+              "$ref": "#/$defs/LagNode"
+            },
+            {
+              "$ref": "#/$defs/RollingMeanNode"
+            },
+            {
+              "$ref": "#/$defs/RollingStdNode"
+            },
+            {
+              "$ref": "#/$defs/RobustZscoreNode"
+            }
+          ],
+          "title": "Input"
+        },
+        "node": {
+          "const": "difference",
+          "title": "Node",
+          "type": "string"
+        },
+        "period_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Period Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node",
+        "input",
+        "period_seconds"
+      ],
+      "title": "DifferenceNode",
+      "type": "object"
+    },
+    "Direction": {
+      "enum": [
+        "positive",
+        "negative",
+        "nonzero"
+      ],
+      "title": "Direction",
+      "type": "string"
+    },
+    "FalsificationCondition": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "description"
+      ],
+      "title": "FalsificationCondition",
+      "type": "object"
+    },
+    "FittedParameterNode": {
+      "additionalProperties": false,
+      "properties": {
+        "node": {
+          "const": "fitted_parameter",
+          "title": "Node",
+          "type": "string"
+        },
+        "parameter": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "title": "Parameter",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node",
+        "parameter"
+      ],
+      "title": "FittedParameterNode",
+      "type": "object"
+    },
+    "LagNode": {
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "discriminator": {
+            "mapping": {
+              "absolute_value": "#/$defs/AbsoluteValueNode",
+              "add": "#/$defs/AddNode",
+              "clip": "#/$defs/ClipNode",
+              "difference": "#/$defs/DifferenceNode",
+              "fitted_parameter": "#/$defs/FittedParameterNode",
+              "lag": "#/$defs/LagNode",
+              "metric": "#/$defs/MetricNode",
+              "multiply": "#/$defs/MultiplyNode",
+              "numeric_constant": "#/$defs/NumericConstantNode",
+              "robust_zscore": "#/$defs/RobustZscoreNode",
+              "rolling_mean": "#/$defs/RollingMeanNode",
+              "rolling_std": "#/$defs/RollingStdNode",
+              "safe_divide": "#/$defs/SafeDivideNode",
+              "subtract": "#/$defs/SubtractNode"
+            },
+            "propertyName": "node"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/MetricNode"
+            },
+            {
+              "$ref": "#/$defs/NumericConstantNode"
+            },
+            {
+              "$ref": "#/$defs/FittedParameterNode"
+            },
+            {
+              "$ref": "#/$defs/AddNode"
+            },
+            {
+              "$ref": "#/$defs/SubtractNode"
+            },
+            {
+              "$ref": "#/$defs/MultiplyNode"
+            },
+            {
+              "$ref": "#/$defs/SafeDivideNode"
+            },
+            {
+              "$ref": "#/$defs/AbsoluteValueNode"
+            },
+            {
+              "$ref": "#/$defs/ClipNode"
+            },
+            {
+              "$ref": "#/$defs/DifferenceNode"
+            },
+            {
+              "$ref": "#/$defs/LagNode"
+            },
+            {
+              "$ref": "#/$defs/RollingMeanNode"
+            },
+            {
+              "$ref": "#/$defs/RollingStdNode"
+            },
+            {
+              "$ref": "#/$defs/RobustZscoreNode"
+            }
+          ],
+          "title": "Input"
+        },
+        "lag_seconds": {
+          "minimum": 0,
+          "title": "Lag Seconds",
+          "type": "integer"
+        },
+        "node": {
+          "const": "lag",
+          "title": "Node",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node",
+        "input",
+        "lag_seconds"
+      ],
+      "title": "LagNode",
+      "type": "object"
+    },
+    "MetricName": {
+      "enum": [
+        "rmse",
+        "mae",
+        "pearson_r",
+        "spearman_r"
+      ],
+      "title": "MetricName",
+      "type": "string"
+    },
+    "MetricNode": {
+      "additionalProperties": false,
+      "properties": {
+        "metric": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+          "title": "Metric",
+          "type": "string"
+        },
+        "node": {
+          "const": "metric",
+          "title": "Node",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node",
+        "metric"
+      ],
+      "title": "MetricNode",
+      "type": "object"
+    },
+    "MultiplyNode": {
+      "additionalProperties": false,
+      "properties": {
+        "left": {
+          "discriminator": {
+            "mapping": {
+              "absolute_value": "#/$defs/AbsoluteValueNode",
+              "add": "#/$defs/AddNode",
+              "clip": "#/$defs/ClipNode",
+              "difference": "#/$defs/DifferenceNode",
+              "fitted_parameter": "#/$defs/FittedParameterNode",
+              "lag": "#/$defs/LagNode",
+              "metric": "#/$defs/MetricNode",
+              "multiply": "#/$defs/MultiplyNode",
+              "numeric_constant": "#/$defs/NumericConstantNode",
+              "robust_zscore": "#/$defs/RobustZscoreNode",
+              "rolling_mean": "#/$defs/RollingMeanNode",
+              "rolling_std": "#/$defs/RollingStdNode",
+              "safe_divide": "#/$defs/SafeDivideNode",
+              "subtract": "#/$defs/SubtractNode"
+            },
+            "propertyName": "node"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/MetricNode"
+            },
+            {
+              "$ref": "#/$defs/NumericConstantNode"
+            },
+            {
+              "$ref": "#/$defs/FittedParameterNode"
+            },
+            {
+              "$ref": "#/$defs/AddNode"
+            },
+            {
+              "$ref": "#/$defs/SubtractNode"
+            },
+            {
+              "$ref": "#/$defs/MultiplyNode"
+            },
+            {
+              "$ref": "#/$defs/SafeDivideNode"
+            },
+            {
+              "$ref": "#/$defs/AbsoluteValueNode"
+            },
+            {
+              "$ref": "#/$defs/ClipNode"
+            },
+            {
+              "$ref": "#/$defs/DifferenceNode"
+            },
+            {
+              "$ref": "#/$defs/LagNode"
+            },
+            {
+              "$ref": "#/$defs/RollingMeanNode"
+            },
+            {
+              "$ref": "#/$defs/RollingStdNode"
+            },
+            {
+              "$ref": "#/$defs/RobustZscoreNode"
+            }
+          ],
+          "title": "Left"
+        },
+        "node": {
+          "const": "multiply",
+          "title": "Node",
+          "type": "string"
+        },
+        "right": {
+          "discriminator": {
+            "mapping": {
+              "absolute_value": "#/$defs/AbsoluteValueNode",
+              "add": "#/$defs/AddNode",
+              "clip": "#/$defs/ClipNode",
+              "difference": "#/$defs/DifferenceNode",
+              "fitted_parameter": "#/$defs/FittedParameterNode",
+              "lag": "#/$defs/LagNode",
+              "metric": "#/$defs/MetricNode",
+              "multiply": "#/$defs/MultiplyNode",
+              "numeric_constant": "#/$defs/NumericConstantNode",
+              "robust_zscore": "#/$defs/RobustZscoreNode",
+              "rolling_mean": "#/$defs/RollingMeanNode",
+              "rolling_std": "#/$defs/RollingStdNode",
+              "safe_divide": "#/$defs/SafeDivideNode",
+              "subtract": "#/$defs/SubtractNode"
+            },
+            "propertyName": "node"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/MetricNode"
+            },
+            {
+              "$ref": "#/$defs/NumericConstantNode"
+            },
+            {
+              "$ref": "#/$defs/FittedParameterNode"
+            },
+            {
+              "$ref": "#/$defs/AddNode"
+            },
+            {
+              "$ref": "#/$defs/SubtractNode"
+            },
+            {
+              "$ref": "#/$defs/MultiplyNode"
+            },
+            {
+              "$ref": "#/$defs/SafeDivideNode"
+            },
+            {
+              "$ref": "#/$defs/AbsoluteValueNode"
+            },
+            {
+              "$ref": "#/$defs/ClipNode"
+            },
+            {
+              "$ref": "#/$defs/DifferenceNode"
+            },
+            {
+              "$ref": "#/$defs/LagNode"
+            },
+            {
+              "$ref": "#/$defs/RollingMeanNode"
+            },
+            {
+              "$ref": "#/$defs/RollingStdNode"
+            },
+            {
+              "$ref": "#/$defs/RobustZscoreNode"
+            }
+          ],
+          "title": "Right"
+        }
+      },
+      "required": [
+        "node",
+        "left",
+        "right"
+      ],
+      "title": "MultiplyNode",
+      "type": "object"
+    },
+    "NearZeroBehavior": {
+      "enum": [
+        "return_null",
+        "return_zero",
+        "use_epsilon_sign"
+      ],
+      "title": "NearZeroBehavior",
+      "type": "string"
+    },
+    "NegativeControl": {
+      "additionalProperties": false,
+      "properties": {
+        "metric": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+          "title": "Metric",
+          "type": "string"
+        },
+        "rationale": {
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        }
+      },
+      "required": [
+        "metric",
+        "rationale"
+      ],
+      "title": "NegativeControl",
+      "type": "object"
+    },
+    "NumericConstantNode": {
+      "additionalProperties": false,
+      "properties": {
+        "node": {
+          "const": "numeric_constant",
+          "title": "Node",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "node",
+        "value"
+      ],
+      "title": "NumericConstantNode",
+      "type": "object"
+    },
+    "Origin": {
+      "enum": [
+        "manual",
+        "llm",
+        "mutation",
+        "baseline"
+      ],
+      "title": "Origin",
+      "type": "string"
+    },
+    "ParameterBounds": {
+      "additionalProperties": false,
+      "properties": {
+        "lower": {
+          "title": "Lower",
+          "type": "number"
+        },
+        "upper": {
+          "title": "Upper",
+          "type": "number"
+        }
+      },
+      "required": [
+        "lower",
+        "upper"
+      ],
+      "title": "ParameterBounds",
+      "type": "object"
+    },
+    "RobustZscoreNode": {
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "discriminator": {
+            "mapping": {
+              "absolute_value": "#/$defs/AbsoluteValueNode",
+              "add": "#/$defs/AddNode",
+              "clip": "#/$defs/ClipNode",
+              "difference": "#/$defs/DifferenceNode",
+              "fitted_parameter": "#/$defs/FittedParameterNode",
+              "lag": "#/$defs/LagNode",
+              "metric": "#/$defs/MetricNode",
+              "multiply": "#/$defs/MultiplyNode",
+              "numeric_constant": "#/$defs/NumericConstantNode",
+              "robust_zscore": "#/$defs/RobustZscoreNode",
+              "rolling_mean": "#/$defs/RollingMeanNode",
+              "rolling_std": "#/$defs/RollingStdNode",
+              "safe_divide": "#/$defs/SafeDivideNode",
+              "subtract": "#/$defs/SubtractNode"
+            },
+            "propertyName": "node"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/MetricNode"
+            },
+            {
+              "$ref": "#/$defs/NumericConstantNode"
+            },
+            {
+              "$ref": "#/$defs/FittedParameterNode"
+            },
+            {
+              "$ref": "#/$defs/AddNode"
+            },
+            {
+              "$ref": "#/$defs/SubtractNode"
+            },
+            {
+              "$ref": "#/$defs/MultiplyNode"
+            },
+            {
+              "$ref": "#/$defs/SafeDivideNode"
+            },
+            {
+              "$ref": "#/$defs/AbsoluteValueNode"
+            },
+            {
+              "$ref": "#/$defs/ClipNode"
+            },
+            {
+              "$ref": "#/$defs/DifferenceNode"
+            },
+            {
+              "$ref": "#/$defs/LagNode"
+            },
+            {
+              "$ref": "#/$defs/RollingMeanNode"
+            },
+            {
+              "$ref": "#/$defs/RollingStdNode"
+            },
+            {
+              "$ref": "#/$defs/RobustZscoreNode"
+            }
+          ],
+          "title": "Input"
+        },
+        "min_periods": {
+          "default": 5,
+          "exclusiveMinimum": 0,
+          "title": "Min Periods",
+          "type": "integer"
+        },
+        "node": {
+          "const": "robust_zscore",
+          "title": "Node",
+          "type": "string"
+        },
+        "window_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Window Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node",
+        "input",
+        "window_seconds"
+      ],
+      "title": "RobustZscoreNode",
+      "type": "object"
+    },
+    "RollingMeanNode": {
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "discriminator": {
+            "mapping": {
+              "absolute_value": "#/$defs/AbsoluteValueNode",
+              "add": "#/$defs/AddNode",
+              "clip": "#/$defs/ClipNode",
+              "difference": "#/$defs/DifferenceNode",
+              "fitted_parameter": "#/$defs/FittedParameterNode",
+              "lag": "#/$defs/LagNode",
+              "metric": "#/$defs/MetricNode",
+              "multiply": "#/$defs/MultiplyNode",
+              "numeric_constant": "#/$defs/NumericConstantNode",
+              "robust_zscore": "#/$defs/RobustZscoreNode",
+              "rolling_mean": "#/$defs/RollingMeanNode",
+              "rolling_std": "#/$defs/RollingStdNode",
+              "safe_divide": "#/$defs/SafeDivideNode",
+              "subtract": "#/$defs/SubtractNode"
+            },
+            "propertyName": "node"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/MetricNode"
+            },
+            {
+              "$ref": "#/$defs/NumericConstantNode"
+            },
+            {
+              "$ref": "#/$defs/FittedParameterNode"
+            },
+            {
+              "$ref": "#/$defs/AddNode"
+            },
+            {
+              "$ref": "#/$defs/SubtractNode"
+            },
+            {
+              "$ref": "#/$defs/MultiplyNode"
+            },
+            {
+              "$ref": "#/$defs/SafeDivideNode"
+            },
+            {
+              "$ref": "#/$defs/AbsoluteValueNode"
+            },
+            {
+              "$ref": "#/$defs/ClipNode"
+            },
+            {
+              "$ref": "#/$defs/DifferenceNode"
+            },
+            {
+              "$ref": "#/$defs/LagNode"
+            },
+            {
+              "$ref": "#/$defs/RollingMeanNode"
+            },
+            {
+              "$ref": "#/$defs/RollingStdNode"
+            },
+            {
+              "$ref": "#/$defs/RobustZscoreNode"
+            }
+          ],
+          "title": "Input"
+        },
+        "min_periods": {
+          "default": 1,
+          "exclusiveMinimum": 0,
+          "title": "Min Periods",
+          "type": "integer"
+        },
+        "node": {
+          "const": "rolling_mean",
+          "title": "Node",
+          "type": "string"
+        },
+        "window_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Window Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node",
+        "input",
+        "window_seconds"
+      ],
+      "title": "RollingMeanNode",
+      "type": "object"
+    },
+    "RollingStdNode": {
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "discriminator": {
+            "mapping": {
+              "absolute_value": "#/$defs/AbsoluteValueNode",
+              "add": "#/$defs/AddNode",
+              "clip": "#/$defs/ClipNode",
+              "difference": "#/$defs/DifferenceNode",
+              "fitted_parameter": "#/$defs/FittedParameterNode",
+              "lag": "#/$defs/LagNode",
+              "metric": "#/$defs/MetricNode",
+              "multiply": "#/$defs/MultiplyNode",
+              "numeric_constant": "#/$defs/NumericConstantNode",
+              "robust_zscore": "#/$defs/RobustZscoreNode",
+              "rolling_mean": "#/$defs/RollingMeanNode",
+              "rolling_std": "#/$defs/RollingStdNode",
+              "safe_divide": "#/$defs/SafeDivideNode",
+              "subtract": "#/$defs/SubtractNode"
+            },
+            "propertyName": "node"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/MetricNode"
+            },
+            {
+              "$ref": "#/$defs/NumericConstantNode"
+            },
+            {
+              "$ref": "#/$defs/FittedParameterNode"
+            },
+            {
+              "$ref": "#/$defs/AddNode"
+            },
+            {
+              "$ref": "#/$defs/SubtractNode"
+            },
+            {
+              "$ref": "#/$defs/MultiplyNode"
+            },
+            {
+              "$ref": "#/$defs/SafeDivideNode"
+            },
+            {
+              "$ref": "#/$defs/AbsoluteValueNode"
+            },
+            {
+              "$ref": "#/$defs/ClipNode"
+            },
+            {
+              "$ref": "#/$defs/DifferenceNode"
+            },
+            {
+              "$ref": "#/$defs/LagNode"
+            },
+            {
+              "$ref": "#/$defs/RollingMeanNode"
+            },
+            {
+              "$ref": "#/$defs/RollingStdNode"
+            },
+            {
+              "$ref": "#/$defs/RobustZscoreNode"
+            }
+          ],
+          "title": "Input"
+        },
+        "min_periods": {
+          "default": 2,
+          "exclusiveMinimum": 0,
+          "title": "Min Periods",
+          "type": "integer"
+        },
+        "node": {
+          "const": "rolling_std",
+          "title": "Node",
+          "type": "string"
+        },
+        "window_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Window Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node",
+        "input",
+        "window_seconds"
+      ],
+      "title": "RollingStdNode",
+      "type": "object"
+    },
+    "SafeDivideNode": {
+      "additionalProperties": false,
+      "properties": {
+        "denominator": {
+          "discriminator": {
+            "mapping": {
+              "absolute_value": "#/$defs/AbsoluteValueNode",
+              "add": "#/$defs/AddNode",
+              "clip": "#/$defs/ClipNode",
+              "difference": "#/$defs/DifferenceNode",
+              "fitted_parameter": "#/$defs/FittedParameterNode",
+              "lag": "#/$defs/LagNode",
+              "metric": "#/$defs/MetricNode",
+              "multiply": "#/$defs/MultiplyNode",
+              "numeric_constant": "#/$defs/NumericConstantNode",
+              "robust_zscore": "#/$defs/RobustZscoreNode",
+              "rolling_mean": "#/$defs/RollingMeanNode",
+              "rolling_std": "#/$defs/RollingStdNode",
+              "safe_divide": "#/$defs/SafeDivideNode",
+              "subtract": "#/$defs/SubtractNode"
+            },
+            "propertyName": "node"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/MetricNode"
+            },
+            {
+              "$ref": "#/$defs/NumericConstantNode"
+            },
+            {
+              "$ref": "#/$defs/FittedParameterNode"
+            },
+            {
+              "$ref": "#/$defs/AddNode"
+            },
+            {
+              "$ref": "#/$defs/SubtractNode"
+            },
+            {
+              "$ref": "#/$defs/MultiplyNode"
+            },
+            {
+              "$ref": "#/$defs/SafeDivideNode"
+            },
+            {
+              "$ref": "#/$defs/AbsoluteValueNode"
+            },
+            {
+              "$ref": "#/$defs/ClipNode"
+            },
+            {
+              "$ref": "#/$defs/DifferenceNode"
+            },
+            {
+              "$ref": "#/$defs/LagNode"
+            },
+            {
+              "$ref": "#/$defs/RollingMeanNode"
+            },
+            {
+              "$ref": "#/$defs/RollingStdNode"
+            },
+            {
+              "$ref": "#/$defs/RobustZscoreNode"
+            }
+          ],
+          "title": "Denominator"
+        },
+        "epsilon": {
+          "exclusiveMinimum": 0.0,
+          "title": "Epsilon",
+          "type": "number"
+        },
+        "near_zero_behavior": {
+          "$ref": "#/$defs/NearZeroBehavior"
+        },
+        "node": {
+          "const": "safe_divide",
+          "title": "Node",
+          "type": "string"
+        },
+        "numerator": {
+          "discriminator": {
+            "mapping": {
+              "absolute_value": "#/$defs/AbsoluteValueNode",
+              "add": "#/$defs/AddNode",
+              "clip": "#/$defs/ClipNode",
+              "difference": "#/$defs/DifferenceNode",
+              "fitted_parameter": "#/$defs/FittedParameterNode",
+              "lag": "#/$defs/LagNode",
+              "metric": "#/$defs/MetricNode",
+              "multiply": "#/$defs/MultiplyNode",
+              "numeric_constant": "#/$defs/NumericConstantNode",
+              "robust_zscore": "#/$defs/RobustZscoreNode",
+              "rolling_mean": "#/$defs/RollingMeanNode",
+              "rolling_std": "#/$defs/RollingStdNode",
+              "safe_divide": "#/$defs/SafeDivideNode",
+              "subtract": "#/$defs/SubtractNode"
+            },
+            "propertyName": "node"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/MetricNode"
+            },
+            {
+              "$ref": "#/$defs/NumericConstantNode"
+            },
+            {
+              "$ref": "#/$defs/FittedParameterNode"
+            },
+            {
+              "$ref": "#/$defs/AddNode"
+            },
+            {
+              "$ref": "#/$defs/SubtractNode"
+            },
+            {
+              "$ref": "#/$defs/MultiplyNode"
+            },
+            {
+              "$ref": "#/$defs/SafeDivideNode"
+            },
+            {
+              "$ref": "#/$defs/AbsoluteValueNode"
+            },
+            {
+              "$ref": "#/$defs/ClipNode"
+            },
+            {
+              "$ref": "#/$defs/DifferenceNode"
+            },
+            {
+              "$ref": "#/$defs/LagNode"
+            },
+            {
+              "$ref": "#/$defs/RollingMeanNode"
+            },
+            {
+              "$ref": "#/$defs/RollingStdNode"
+            },
+            {
+              "$ref": "#/$defs/RobustZscoreNode"
+            }
+          ],
+          "title": "Numerator"
+        }
+      },
+      "required": [
+        "node",
+        "numerator",
+        "denominator",
+        "epsilon",
+        "near_zero_behavior"
+      ],
+      "title": "SafeDivideNode",
+      "type": "object"
+    },
+    "SubtractNode": {
+      "additionalProperties": false,
+      "properties": {
+        "left": {
+          "discriminator": {
+            "mapping": {
+              "absolute_value": "#/$defs/AbsoluteValueNode",
+              "add": "#/$defs/AddNode",
+              "clip": "#/$defs/ClipNode",
+              "difference": "#/$defs/DifferenceNode",
+              "fitted_parameter": "#/$defs/FittedParameterNode",
+              "lag": "#/$defs/LagNode",
+              "metric": "#/$defs/MetricNode",
+              "multiply": "#/$defs/MultiplyNode",
+              "numeric_constant": "#/$defs/NumericConstantNode",
+              "robust_zscore": "#/$defs/RobustZscoreNode",
+              "rolling_mean": "#/$defs/RollingMeanNode",
+              "rolling_std": "#/$defs/RollingStdNode",
+              "safe_divide": "#/$defs/SafeDivideNode",
+              "subtract": "#/$defs/SubtractNode"
+            },
+            "propertyName": "node"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/MetricNode"
+            },
+            {
+              "$ref": "#/$defs/NumericConstantNode"
+            },
+            {
+              "$ref": "#/$defs/FittedParameterNode"
+            },
+            {
+              "$ref": "#/$defs/AddNode"
+            },
+            {
+              "$ref": "#/$defs/SubtractNode"
+            },
+            {
+              "$ref": "#/$defs/MultiplyNode"
+            },
+            {
+              "$ref": "#/$defs/SafeDivideNode"
+            },
+            {
+              "$ref": "#/$defs/AbsoluteValueNode"
+            },
+            {
+              "$ref": "#/$defs/ClipNode"
+            },
+            {
+              "$ref": "#/$defs/DifferenceNode"
+            },
+            {
+              "$ref": "#/$defs/LagNode"
+            },
+            {
+              "$ref": "#/$defs/RollingMeanNode"
+            },
+            {
+              "$ref": "#/$defs/RollingStdNode"
+            },
+            {
+              "$ref": "#/$defs/RobustZscoreNode"
+            }
+          ],
+          "title": "Left"
+        },
+        "node": {
+          "const": "subtract",
+          "title": "Node",
+          "type": "string"
+        },
+        "right": {
+          "discriminator": {
+            "mapping": {
+              "absolute_value": "#/$defs/AbsoluteValueNode",
+              "add": "#/$defs/AddNode",
+              "clip": "#/$defs/ClipNode",
+              "difference": "#/$defs/DifferenceNode",
+              "fitted_parameter": "#/$defs/FittedParameterNode",
+              "lag": "#/$defs/LagNode",
+              "metric": "#/$defs/MetricNode",
+              "multiply": "#/$defs/MultiplyNode",
+              "numeric_constant": "#/$defs/NumericConstantNode",
+              "robust_zscore": "#/$defs/RobustZscoreNode",
+              "rolling_mean": "#/$defs/RollingMeanNode",
+              "rolling_std": "#/$defs/RollingStdNode",
+              "safe_divide": "#/$defs/SafeDivideNode",
+              "subtract": "#/$defs/SubtractNode"
+            },
+            "propertyName": "node"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/MetricNode"
+            },
+            {
+              "$ref": "#/$defs/NumericConstantNode"
+            },
+            {
+              "$ref": "#/$defs/FittedParameterNode"
+            },
+            {
+              "$ref": "#/$defs/AddNode"
+            },
+            {
+              "$ref": "#/$defs/SubtractNode"
+            },
+            {
+              "$ref": "#/$defs/MultiplyNode"
+            },
+            {
+              "$ref": "#/$defs/SafeDivideNode"
+            },
+            {
+              "$ref": "#/$defs/AbsoluteValueNode"
+            },
+            {
+              "$ref": "#/$defs/ClipNode"
+            },
+            {
+              "$ref": "#/$defs/DifferenceNode"
+            },
+            {
+              "$ref": "#/$defs/LagNode"
+            },
+            {
+              "$ref": "#/$defs/RollingMeanNode"
+            },
+            {
+              "$ref": "#/$defs/RollingStdNode"
+            },
+            {
+              "$ref": "#/$defs/RobustZscoreNode"
+            }
+          ],
+          "title": "Right"
+        }
+      },
+      "required": [
+        "node",
+        "left",
+        "right"
+      ],
+      "title": "SubtractNode",
+      "type": "object"
+    },
+    "TargetTransform": {
+      "enum": [
+        "identity",
+        "difference",
+        "robust_zscore"
+      ],
+      "title": "TargetTransform",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "blind_metrics": {
+      "items": {
+        "$ref": "#/$defs/MetricName"
+      },
+      "minItems": 1,
+      "title": "Blind Metrics",
+      "type": "array"
+    },
+    "complexity_budget": {
+      "$ref": "#/$defs/ComplexityBudget"
+    },
+    "concise_claim": {
+      "minLength": 1,
+      "title": "Concise Claim",
+      "type": "string"
+    },
+    "expected_direction": {
+      "$ref": "#/$defs/Direction"
+    },
+    "expression": {
+      "discriminator": {
+        "mapping": {
+          "absolute_value": "#/$defs/AbsoluteValueNode",
+          "add": "#/$defs/AddNode",
+          "clip": "#/$defs/ClipNode",
+          "difference": "#/$defs/DifferenceNode",
+          "fitted_parameter": "#/$defs/FittedParameterNode",
+          "lag": "#/$defs/LagNode",
+          "metric": "#/$defs/MetricNode",
+          "multiply": "#/$defs/MultiplyNode",
+          "numeric_constant": "#/$defs/NumericConstantNode",
+          "robust_zscore": "#/$defs/RobustZscoreNode",
+          "rolling_mean": "#/$defs/RollingMeanNode",
+          "rolling_std": "#/$defs/RollingStdNode",
+          "safe_divide": "#/$defs/SafeDivideNode",
+          "subtract": "#/$defs/SubtractNode"
+        },
+        "propertyName": "node"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/MetricNode"
+        },
+        {
+          "$ref": "#/$defs/NumericConstantNode"
+        },
+        {
+          "$ref": "#/$defs/FittedParameterNode"
+        },
+        {
+          "$ref": "#/$defs/AddNode"
+        },
+        {
+          "$ref": "#/$defs/SubtractNode"
+        },
+        {
+          "$ref": "#/$defs/MultiplyNode"
+        },
+        {
+          "$ref": "#/$defs/SafeDivideNode"
+        },
+        {
+          "$ref": "#/$defs/AbsoluteValueNode"
+        },
+        {
+          "$ref": "#/$defs/ClipNode"
+        },
+        {
+          "$ref": "#/$defs/DifferenceNode"
+        },
+        {
+          "$ref": "#/$defs/LagNode"
+        },
+        {
+          "$ref": "#/$defs/RollingMeanNode"
+        },
+        {
+          "$ref": "#/$defs/RollingStdNode"
+        },
+        {
+          "$ref": "#/$defs/RobustZscoreNode"
+        }
+      ],
+      "title": "Expression"
+    },
+    "falsification_conditions": {
+      "items": {
+        "$ref": "#/$defs/FalsificationCondition"
+      },
+      "minItems": 1,
+      "title": "Falsification Conditions",
+      "type": "array"
+    },
+    "fitting_metric": {
+      "$ref": "#/$defs/MetricName"
+    },
+    "hypothesis_type": {
+      "const": "observational_prediction",
+      "default": "observational_prediction",
+      "title": "Hypothesis Type",
+      "type": "string"
+    },
+    "input_metrics": {
+      "items": {
+        "minLength": 1,
+        "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+        "type": "string"
+      },
+      "maxItems": 3,
+      "minItems": 1,
+      "title": "Input Metrics",
+      "type": "array"
+    },
+    "maximum_lag_seconds": {
+      "minimum": 0,
+      "title": "Maximum Lag Seconds",
+      "type": "integer"
+    },
+    "minimum_baseline_improvement": {
+      "minimum": 0.0,
+      "title": "Minimum Baseline Improvement",
+      "type": "number"
+    },
+    "minimum_blind_effect": {
+      "exclusiveMinimum": 0.0,
+      "title": "Minimum Blind Effect",
+      "type": "number"
+    },
+    "negative_controls": {
+      "items": {
+        "$ref": "#/$defs/NegativeControl"
+      },
+      "title": "Negative Controls",
+      "type": "array"
+    },
+    "origin": {
+      "$ref": "#/$defs/Origin"
+    },
+    "parameter_bounds": {
+      "patternProperties": {
+        "^[A-Za-z_][A-Za-z0-9_]*$": {
+          "$ref": "#/$defs/ParameterBounds"
+        }
+      },
+      "propertyNames": {
+        "minLength": 1
+      },
+      "title": "Parameter Bounds",
+      "type": "object"
+    },
+    "parent_hypothesis_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Parent Hypothesis Ids",
+      "type": "array"
+    },
+    "random_seed": {
+      "title": "Random Seed",
+      "type": "integer"
+    },
+    "rationale": {
+      "minLength": 1,
+      "title": "Rationale",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "target_metric": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
+      "title": "Target Metric",
+      "type": "string"
+    },
+    "target_transform": {
+      "$ref": "#/$defs/TargetTransform"
+    },
+    "title": {
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "tuning_metric": {
+      "$ref": "#/$defs/MetricName"
+    }
+  },
+  "required": [
+    "title",
+    "concise_claim",
+    "rationale",
+    "target_metric",
+    "input_metrics",
+    "target_transform",
+    "expression",
+    "expected_direction",
+    "maximum_lag_seconds",
+    "fitting_metric",
+    "tuning_metric",
+    "blind_metrics",
+    "minimum_blind_effect",
+    "minimum_baseline_improvement",
+    "falsification_conditions",
+    "origin",
+    "random_seed"
+  ],
+  "title": "HypothesisSpec",
+  "type": "object"
+}
