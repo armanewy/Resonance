@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 from io import StringIO
+from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -10,6 +11,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
+from resonance.analysis import AlignedPair, LagScanResult, PairAnalysis, ValidationResult
+from resonance.analysis.lifecycle import LifecycleEvent, fetch_lifecycle_events
 from resonance.analysis.service import (
     MetricPairAnalysis,
     ValidationOptions,
@@ -19,9 +22,12 @@ from resonance.analysis.service import (
 from resonance.config import ConfigError, load_config
 from resonance.storage import (
     DEFAULT_DB_PATH,
+    CorrelationFinding,
     EventMarker,
+    correlation_finding_from_row,
     ensure_database,
     fetch_event_markers,
+    fetch_correlation_findings,
     fetch_measurements,
     insert_event_marker,
     latest_measurement_by_metric,
@@ -30,7 +36,13 @@ from resonance.storage import (
     sample_counts_by_metric,
 )
 from resonance.time_utils import parse_utc, utc_now
-from resonance.ui import aligned_transformed_timeline, lag_profile, lagged_scatter, stability_chart
+from resonance.ui import (
+    aligned_transformed_timeline,
+    lag_profile,
+    lagged_scatter,
+    render_finding_card,
+    stability_chart,
+)
 from resonance.ui.pair_explorer import (
     PAIR_EXPLORER_INTERVALS,
     PAIR_MAX_LAGS,
@@ -66,6 +78,9 @@ CARD_METRICS = {
     "Temperature": "weather_temperature_c",
     "Precipitation": "weather_precipitation_mm",
 }
+
+VISIBLE_FINDING_STATUSES = ("verified", "strengthened", "weakened", "broken")
+ARCHIVED_FINDING_STATUSES = {"broken"}
 
 
 st.set_page_config(page_title="Resonance", layout="wide")
@@ -103,6 +118,7 @@ def main() -> None:
         df = _rows_to_dataframe(rows, local_tz)
 
         _current_cards(conn)
+        _render_findings(conn)
         _render_event_markers(conn, local_tz)
         _render_connectivity(df)
         _render_utilization(df)
@@ -134,6 +150,140 @@ def _current_cards(conn) -> None:
 
     for column, (label, row) in zip(columns, metrics.items()):
         column.metric(label, _format_value(float(row["value"]), row["unit"]), help=f"source: {row['source']}")
+
+
+def _render_findings(conn) -> None:
+    st.subheader("Findings")
+    show_archived = st.checkbox("Show archived findings", value=False, key="show_archived_findings")
+    findings = dashboard_findings(conn, show_archived=show_archived)
+    if not findings:
+        st.info("No verified findings yet.")
+        return
+
+    for index, finding in enumerate(findings):
+        if index:
+            st.divider()
+        st.caption(f"Lifecycle status: {finding.status}")
+        render_finding_card(finding, analysis_from_finding(finding), streamlit=st)
+
+
+def dashboard_findings(conn, *, show_archived: bool) -> tuple[CorrelationFinding, ...]:
+    """Return lifecycle-backed findings for display, sorted by evidence quality."""
+
+    latest_events = _latest_lifecycle_events(conn)
+    stored_findings = {
+        _finding_identity(finding): finding
+        for finding in (correlation_finding_from_row(row) for row in fetch_correlation_findings(conn))
+    }
+    findings = []
+    for event in latest_events:
+        if event.status not in VISIBLE_FINDING_STATUSES:
+            continue
+        if event.status in ARCHIVED_FINDING_STATUSES and not show_archived:
+            continue
+        stored = stored_findings.get(_event_identity(event))
+        finding = _finding_from_lifecycle_event(event, stored)
+        if finding is not None:
+            findings.append(finding)
+    findings.sort(key=_evidence_quality_key)
+    return tuple(findings)
+
+
+def analysis_from_finding(finding: CorrelationFinding) -> PairAnalysis:
+    evidence = _evidence(finding)
+    cadence_seconds = max(1, _evidence_int(evidence, "cadence_seconds", 300))
+    best_lag_steps = int(round(finding.lag_seconds / cadence_seconds))
+    start_utc = _evidence_timestamp(evidence, "aligned_start_utc", finding.first_seen_utc)
+    end_utc = _evidence_timestamp(evidence, "aligned_end_utc", finding.last_verified_utc)
+    window_scores = tuple(score for score in evidence.get("window_scores", ()) if isinstance(score, Mapping))
+
+    return PairAnalysis(
+        aligned_pair=AlignedPair(
+            x_metric=finding.x_metric,
+            y_metric=finding.y_metric,
+            cadence_seconds=cadence_seconds,
+            frame=(),
+            x_coverage=_evidence_float(evidence, "x_coverage", 0.0),
+            y_coverage=_evidence_float(evidence, "y_coverage", 0.0),
+            start_utc=start_utc,
+            end_utc=end_utc,
+        ),
+        transform_name=finding.transform,
+        lag_result=LagScanResult(
+            scores=(
+                {
+                    "lag_steps": best_lag_steps,
+                    "lag_seconds": finding.lag_seconds,
+                    "rho": finding.discovery_rho,
+                    "overlap_count": _evidence_int(evidence, "discovery_overlap", finding.overlap_count),
+                },
+            ),
+            best_lag_steps=best_lag_steps,
+            best_lag_seconds=finding.lag_seconds,
+            best_rho=finding.discovery_rho,
+        ),
+        validation_result=ValidationResult(
+            permutation_p_value=_evidence_optional_float(evidence, "permutation_p_value"),
+            holdout_rho=finding.holdout_rho,
+            holdout_overlap=finding.overlap_count,
+            sign_stability=finding.stability,
+            window_scores=window_scores,
+            warnings=tuple(str(item) for item in evidence.get("warnings", ()) if item),
+        ),
+    )
+
+
+def _latest_lifecycle_events(conn) -> tuple[LifecycleEvent, ...]:
+    latest: dict[str, LifecycleEvent] = {}
+    for event in fetch_lifecycle_events(conn):
+        latest[event.relationship_key] = event
+    return tuple(latest.values())
+
+
+def _finding_from_lifecycle_event(
+    event: LifecycleEvent,
+    stored: CorrelationFinding | None,
+) -> CorrelationFinding | None:
+    if event.discovery_rho is None or event.holdout_rho is None:
+        return None
+    if event.corrected_q is None or event.stability is None or event.overlap_count is None:
+        return None
+
+    evidence = dict(stored.evidence) if stored is not None else {}
+    return CorrelationFinding(
+        x_metric=event.x_metric,
+        y_metric=event.y_metric,
+        transform=event.transform,
+        lag_seconds=event.lag_seconds,
+        discovery_rho=event.discovery_rho,
+        holdout_rho=event.holdout_rho,
+        corrected_q=event.corrected_q,
+        stability=event.stability,
+        overlap_count=event.overlap_count,
+        first_seen_utc=stored.first_seen_utc if stored is not None else event.event_utc,
+        last_verified_utc=event.event_utc,
+        status=event.status,
+        evidence=evidence,
+    )
+
+
+def _evidence_quality_key(finding: CorrelationFinding) -> tuple[float, float, int, float, str, str]:
+    return (
+        finding.corrected_q,
+        -finding.stability,
+        -finding.overlap_count,
+        -abs(finding.holdout_rho),
+        finding.x_metric,
+        finding.y_metric,
+    )
+
+
+def _finding_identity(finding: CorrelationFinding) -> tuple[str, str, str]:
+    return finding.x_metric, finding.y_metric, finding.transform
+
+
+def _event_identity(event: LifecycleEvent) -> tuple[str, str, str]:
+    return event.x_metric, event.y_metric, event.transform
 
 
 def _render_event_markers(conn, local_tz: ZoneInfo) -> None:
@@ -550,6 +700,43 @@ def _event_rows_csv(rows, local_tz: ZoneInfo) -> bytes:
         ],
     ).to_csv(output, index=False)
     return output.getvalue().encode("utf-8")
+
+
+def _evidence(finding: CorrelationFinding) -> Mapping[str, Any]:
+    return finding.evidence if isinstance(finding.evidence, Mapping) else {}
+
+
+def _evidence_timestamp(evidence: Mapping[str, Any], key: str, default) -> Any:
+    value = evidence.get(key)
+    if isinstance(value, str) and value:
+        try:
+            return parse_utc(value)
+        except ValueError:
+            return default
+    return default
+
+
+def _evidence_int(evidence: Mapping[str, Any], key: str, default: int) -> int:
+    value = evidence.get(key)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _evidence_float(evidence: Mapping[str, Any], key: str, default: float) -> float:
+    value = _evidence_optional_float(evidence, key)
+    return default if value is None else value
+
+
+def _evidence_optional_float(evidence: Mapping[str, Any], key: str) -> float | None:
+    value = evidence.get(key)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 if __name__ == "__main__":

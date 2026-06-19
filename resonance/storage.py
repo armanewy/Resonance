@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Sequence
 
-from resonance.time_utils import to_utc_iso
+from resonance.time_utils import parse_utc, to_utc_iso
 
 
 DEFAULT_DB_PATH = Path("data/resonance.db")
@@ -356,6 +356,24 @@ def fetch_correlation_findings(
             """,
             (status,),
         )
+    )
+
+
+def correlation_finding_from_row(row: sqlite3.Row) -> CorrelationFinding:
+    return CorrelationFinding(
+        x_metric=row["x_metric"],
+        y_metric=row["y_metric"],
+        transform=row["transform"],
+        lag_seconds=int(row["lag_seconds"]),
+        discovery_rho=float(row["discovery_rho"]),
+        holdout_rho=float(row["holdout_rho"]),
+        corrected_q=float(row["corrected_q"]),
+        stability=float(row["stability"]),
+        overlap_count=int(row["overlap_count"]),
+        first_seen_utc=parse_utc(row["first_seen_utc"]),
+        last_verified_utc=parse_utc(row["last_verified_utc"]),
+        status=row["status"],
+        evidence=json.loads(row["evidence_json"] or "{}"),
     )
 
 
