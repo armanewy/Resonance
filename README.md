@@ -78,6 +78,30 @@ Remove demo data:
 python -m resonance.seed_demo --clear
 ```
 
+## Data Audit
+
+Audit the configured SQLite database for recent coverage, gaps, stale metrics, duplicate timestamps, and collector errors:
+
+```powershell
+python -m resonance.audit --hours 24
+```
+
+Emit JSON for scripts:
+
+```powershell
+python -m resonance.audit --hours 24 --json
+```
+
+## Synthetic Scenarios
+
+Generate a deterministic synthetic time-series scenario:
+
+```powershell
+python -m resonance.synthetic --scenario strong_lag --output tmp\strong_lag.csv
+```
+
+Available scenarios are `strong_lag`, `shared_seasonality_only`, `single_shared_outlier`, `relationship_break`, `independent_autocorrelated`, and `missing_data`.
+
 ## Tests
 
 ```powershell
