@@ -126,6 +126,18 @@ Freeze a reproducible, sealed scientific dataset snapshot from the local SQLite 
 python -m resonance.science.snapshot_cli create --hours 720 --metrics tcp_latency_ms,dns_latency_ms,cpu_percent --max-lag-seconds 3600
 ```
 
+Append snapshot creation to the scientific ledger:
+
+```powershell
+python -m resonance.science.snapshot_cli create --hours 720 --metrics tcp_latency_ms,dns_latency_ms,cpu_percent --max-lag-seconds 3600 --ledger data/science/ledger.jsonl
+```
+
+Inspect a snapshot without printing blind values:
+
+```powershell
+python -m resonance.science.snapshot_cli inspect SNAPSHOT_ID
+```
+
 Snapshots are written as content-addressed artifacts under `data/science/artifacts/sha256/`.
 Rows are normalized to UTC, sorted deterministically, and split chronologically into exploration,
 tuning, and blind partitions with an embargo around each split boundary. Missing metric
@@ -141,6 +153,12 @@ Verify the ledger:
 
 ```powershell
 python -m resonance.science.ledger_cli verify
+```
+
+Verify path-bearing artifact references recorded in the ledger:
+
+```powershell
+python -m resonance.science.ledger_cli verify --artifact-root data/science/artifacts
 ```
 
 Show recent entries:

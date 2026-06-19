@@ -12,6 +12,7 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Iterable, Sequence
 
+from resonance.science.ledger import DEFAULT_LEDGER_PATH, append_event
 from resonance.storage import DEFAULT_DB_PATH
 from resonance.time_utils import parse_utc, to_utc_iso, utc_now
 
@@ -49,6 +50,7 @@ def create_snapshot(
     metrics: Sequence[str],
     max_lag_seconds: int,
     artifact_root: str | Path = DEFAULT_ARTIFACT_ROOT,
+    ledger_path: str | Path | None = None,
 ) -> dict[str, Any]:
     selected_metrics = _normalize_metrics(metrics)
     if hours <= 0:
@@ -67,10 +69,12 @@ def create_snapshot(
         "start_utc": rows[0]["timestamp_utc"],
         "end_utc": rows[-1]["timestamp_utc"],
     }
+    metric_catalog = _metric_catalog(rows, selected_metrics)
     snapshot_payload = {
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
         "config": config,
         "time_range_utc": time_range,
+        "metric_catalog": metric_catalog,
         "rows": rows,
     }
     snapshot_bytes = _canonical_gzip_json(snapshot_payload)
@@ -112,6 +116,7 @@ def create_snapshot(
             "blind": len(split["partitions"]["blind"]),
             "embargoed": len(split["embargoed_indices"]),
         },
+        "metric_catalog": metric_catalog,
         "coverage": _coverage(rows, selected_metrics),
         "cadence": _cadence(rows, selected_metrics),
         "split_boundaries": split["boundaries"],
@@ -123,7 +128,84 @@ def create_snapshot(
     manifest_hash = _sha256(manifest_bytes)
     manifest_ref = _store_artifact(root, manifest_hash, "json", manifest_bytes)
     _write_snapshot_index(root, snapshot_id, manifest_ref)
+    if ledger_path is not None:
+        append_snapshot_created_event(manifest, artifact_root=root, ledger_path=ledger_path)
     return manifest
+
+
+def append_snapshot_created_event(
+    manifest: dict[str, Any],
+    *,
+    artifact_root: str | Path = DEFAULT_ARTIFACT_ROOT,
+    ledger_path: str | Path = DEFAULT_LEDGER_PATH,
+) -> dict[str, Any]:
+    """Append a ledger entry that records a created snapshot and its artifacts."""
+
+    root = Path(artifact_root)
+    artifacts = manifest["artifacts"]
+    return append_event(
+        "snapshot_created",
+        {
+            "snapshot_id": manifest["snapshot_id"],
+            "artifact_root": str(root.resolve()),
+            "time_range_utc": manifest["time_range_utc"],
+            "split_boundaries": manifest["split_boundaries"],
+            "row_counts": manifest["row_counts"],
+            "metric_catalog": manifest["metric_catalog"],
+            "artifacts": artifacts,
+        },
+        artifact_hashes={name: artifact["sha256"] for name, artifact in artifacts.items()},
+        code_commit=manifest.get("git_commit"),
+        ledger_path=ledger_path,
+    )
+
+
+def load_snapshot_manifest(
+    snapshot_id: str,
+    *,
+    artifact_root: str | Path = DEFAULT_ARTIFACT_ROOT,
+) -> dict[str, Any]:
+    return _load_manifest(snapshot_id, Path(artifact_root))
+
+
+def snapshot_summary(
+    snapshot_id: str,
+    *,
+    artifact_root: str | Path = DEFAULT_ARTIFACT_ROOT,
+) -> dict[str, Any]:
+    manifest = load_snapshot_manifest(snapshot_id, artifact_root=artifact_root)
+    blind_artifact_path = Path(artifact_root) / manifest["artifacts"]["blind"]["path"]
+    return {
+        "snapshot_id": manifest["snapshot_id"],
+        "git_commit": manifest["git_commit"],
+        "created_at_utc": manifest["created_at_utc"],
+        "time_range_utc": manifest["time_range_utc"],
+        "split_ranges": manifest["split_boundaries"]["partitions"],
+        "metric_catalog": manifest["metric_catalog"],
+        "blind_data": {
+            "available": blind_artifact_path.exists(),
+            "row_count": manifest["row_counts"]["blind"],
+            "values_exposed": False,
+        },
+    }
+
+
+def verify_snapshot_artifacts(
+    snapshot_id: str,
+    *,
+    artifact_root: str | Path = DEFAULT_ARTIFACT_ROOT,
+) -> tuple[str, ...]:
+    manifest = load_snapshot_manifest(snapshot_id, artifact_root=artifact_root)
+    root = Path(artifact_root)
+    errors: list[str] = []
+    for name, artifact in manifest["artifacts"].items():
+        path = root / artifact["path"]
+        if not path.exists():
+            errors.append(f"{name}: missing artifact {path}")
+            continue
+        if _sha256(path.read_bytes()) != artifact["sha256"]:
+            errors.append(f"{name}: hash mismatch for {path}")
+    return tuple(errors)
 
 
 def load_exploration_view(
@@ -389,6 +471,42 @@ def _cadence_for_timestamps(timestamps: Iterable[str]) -> dict[str, Any]:
         "min_seconds": min(deltas),
         "max_seconds": max(deltas),
     }
+
+
+def _metric_catalog(rows: Sequence[dict[str, Any]], metrics: Sequence[str]) -> dict[str, Any]:
+    coverage = _coverage(rows, metrics)
+    cadence = _cadence(rows, metrics)
+    catalog_metrics: list[dict[str, Any]] = []
+    for metric in metrics:
+        units = sorted(
+            {
+                observation["unit"]
+                for row in rows
+                for observation in row["metrics"].get(metric, [])
+            }
+        )
+        sources = sorted(
+            {
+                observation["source"]
+                for row in rows
+                for observation in row["metrics"].get(metric, [])
+            }
+        )
+        catalog_metrics.append(
+            {
+                "name": metric,
+                "units": units,
+                "sources": sources,
+                "coverage": coverage[metric],
+                "cadence": cadence[metric],
+            }
+        )
+    catalog = {
+        "schema_version": SNAPSHOT_SCHEMA_VERSION,
+        "metric_names": list(metrics),
+        "metrics": catalog_metrics,
+    }
+    return {**catalog, "catalog_id": _sha256(_canonical_json(catalog))}
 
 
 def _store_artifact(root: Path, digest: str, extension: str, content: bytes) -> dict[str, str]:

@@ -5,7 +5,13 @@ import json
 from pathlib import Path
 from typing import Sequence
 
-from resonance.science.ledger import DEFAULT_LEDGER_PATH, LedgerError, read_entries, verify_ledger
+from resonance.science.ledger import (
+    DEFAULT_LEDGER_PATH,
+    LedgerError,
+    read_entries,
+    verify_ledger,
+    verify_ledger_artifacts,
+)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -17,7 +23,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("verify", help="Verify ledger sequence and hashes.")
+    verify_parser = subparsers.add_parser("verify", help="Verify ledger sequence and hashes.")
+    verify_parser.add_argument(
+        "--artifact-root",
+        help="Also verify path-bearing artifacts relative to this root.",
+    )
 
     show_parser = subparsers.add_parser("show", help="Show recent verified ledger entries.")
     show_parser.add_argument("--limit", type=_positive_int, default=20, help="Number of entries to show.")
@@ -27,14 +37,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "verify":
         verification = verify_ledger(ledger_path)
-        if verification.valid:
-            head = verification.head_hash or "none"
-            print(f"Ledger verified: {verification.entry_count} entries; head={head}")
-            return 0
-        print("Ledger verification failed:")
-        for error in verification.errors:
-            print(f"- {error}")
-        return 1
+        errors = list(verification.errors)
+        if verification.valid and args.artifact_root is not None:
+            errors.extend(verify_ledger_artifacts(ledger_path, artifact_root=args.artifact_root))
+        if errors:
+            print("Ledger verification failed:")
+            for error in errors:
+                print(f"- {error}")
+            return 1
+        head = verification.head_hash or "none"
+        print(f"Ledger verified: {verification.entry_count} entries; head={head}")
+        if args.artifact_root is not None:
+            print("Ledger artifacts verified")
+        return 0
 
     if args.command == "show":
         try:

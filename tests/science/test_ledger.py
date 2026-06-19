@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from resonance.science.ledger import (
     append_event,
     read_entries,
     verify_ledger,
+    verify_ledger_artifacts,
 )
 from resonance.science.ledger_cli import main
 
@@ -142,6 +144,38 @@ def test_append_refuses_invalid_ledger(tmp_path: Path) -> None:
         )
 
     assert verify_ledger(ledger_path).valid is False
+
+
+def test_verify_ledger_artifacts_checks_path_hash_references(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "artifacts"
+    artifact_root.mkdir()
+    artifact = artifact_root / "report.json"
+    artifact.write_text('{"ok":true}\n', encoding="utf-8")
+    artifact_hash = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    ledger_path = tmp_path / "ledger.jsonl"
+
+    append_event(
+        "snapshot_created",
+        {
+            "snapshot_id": "snapshot-001",
+            "artifact_root": str(artifact_root),
+            "artifacts": {
+                "report": {
+                    "path": "report.json",
+                    "sha256": artifact_hash,
+                    "format": "json",
+                }
+            },
+        },
+        artifact_hashes={"report": artifact_hash},
+        code_commit=CODE_COMMIT,
+        ledger_path=ledger_path,
+        timestamp_utc=NOW,
+    )
+
+    assert verify_ledger_artifacts(ledger_path) == ()
+    artifact.write_text('{"ok":false}\n', encoding="utf-8")
+    assert any("hash mismatch" in error for error in verify_ledger_artifacts(ledger_path))
 
 
 def test_cli_verify_and_show(tmp_path: Path, capsys) -> None:

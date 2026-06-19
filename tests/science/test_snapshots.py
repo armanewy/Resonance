@@ -16,7 +16,11 @@ from resonance.science.snapshots import (
     create_snapshot,
     load_blind_view,
     load_exploration_view,
+    snapshot_summary,
+    verify_snapshot_artifacts,
 )
+from resonance.science.snapshot_cli import main as snapshot_cli_main
+from resonance.science.ledger import read_entries, verify_ledger
 from resonance.storage import Measurement, init_db, insert_measurements
 
 
@@ -45,6 +49,54 @@ def test_snapshot_hash_is_stable_for_identical_rows_and_config(tmp_path: Path) -
     assert second["snapshot_id"] == first["snapshot_id"]
     assert second["artifacts"]["snapshot"]["sha256"] == first["artifacts"]["snapshot"]["sha256"]
     assert second == first
+
+
+def test_snapshot_includes_metric_catalog_and_inspect_omits_blind_values(tmp_path: Path, capsys) -> None:
+    db_path = _create_db(tmp_path, _measurements(8, start_value=100.0))
+    artifact_root = tmp_path / "artifacts"
+    manifest = create_snapshot(
+        db_path=db_path,
+        hours=24,
+        metrics=["cpu_percent"],
+        max_lag_seconds=0,
+        artifact_root=artifact_root,
+    )
+
+    summary = snapshot_summary(manifest["snapshot_id"], artifact_root=artifact_root)
+    assert manifest["metric_catalog"]["metric_names"] == ["cpu_percent"]
+    assert len(manifest["metric_catalog"]["catalog_id"]) == 64
+    assert summary["split_ranges"] == manifest["split_boundaries"]["partitions"]
+    assert summary["blind_data"] == {"available": True, "row_count": 2, "values_exposed": False}
+
+    assert snapshot_cli_main(["inspect", manifest["snapshot_id"], "--artifact-root", str(artifact_root)]) == 0
+    output = capsys.readouterr().out
+    assert '"snapshot_id"' in output
+    assert '"split_ranges"' in output
+    assert '"metric_catalog"' in output
+    assert '"blind_data"' in output
+    assert "106.0" not in output
+    assert "107.0" not in output
+
+
+def test_snapshot_creation_can_append_snapshot_created_to_ledger(tmp_path: Path) -> None:
+    db_path = _create_db(tmp_path, _measurements(8))
+    artifact_root = tmp_path / "artifacts"
+    ledger_path = tmp_path / "ledger.jsonl"
+
+    manifest = create_snapshot(
+        db_path=db_path,
+        hours=24,
+        metrics=["cpu_percent"],
+        max_lag_seconds=0,
+        artifact_root=artifact_root,
+        ledger_path=ledger_path,
+    )
+
+    entries = read_entries(ledger_path)
+    assert verify_ledger(ledger_path).valid is True
+    assert entries[0]["event_type"] == "snapshot_created"
+    assert entries[0]["payload"]["snapshot_id"] == manifest["snapshot_id"]
+    assert verify_snapshot_artifacts(manifest["snapshot_id"], artifact_root=artifact_root) == ()
 
 
 def test_splits_are_chronological_with_configured_embargo(tmp_path: Path) -> None:

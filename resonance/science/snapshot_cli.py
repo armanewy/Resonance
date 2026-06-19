@@ -9,6 +9,7 @@ from resonance.science.snapshots import (
     DEFAULT_ARTIFACT_ROOT,
     create_snapshot,
     parse_metric_csv,
+    snapshot_summary,
 )
 from resonance.storage import DEFAULT_DB_PATH
 
@@ -36,6 +37,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=str(DEFAULT_ARTIFACT_ROOT),
         help="root directory for content-addressed snapshot artifacts",
     )
+    create.add_argument(
+        "--ledger",
+        help="append a snapshot_created event to this ledger path after creating artifacts",
+    )
+
+    inspect = subparsers.add_parser("inspect", help="print sealed snapshot identity without blind values")
+    inspect.add_argument("snapshot_id", help="snapshot ID to inspect")
+    inspect.add_argument(
+        "--artifact-root",
+        default=str(DEFAULT_ARTIFACT_ROOT),
+        help="root directory for content-addressed snapshot artifacts",
+    )
 
     args = parser.parse_args(argv)
     if args.command == "create":
@@ -45,8 +58,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             metrics=parse_metric_csv(args.metrics),
             max_lag_seconds=args.max_lag_seconds,
             artifact_root=Path(args.artifact_root),
+            ledger_path=Path(args.ledger) if args.ledger else None,
         )
         print(json.dumps(manifest, indent=2, sort_keys=True))
+        return 0
+    if args.command == "inspect":
+        summary = snapshot_summary(args.snapshot_id, artifact_root=Path(args.artifact_root))
+        print(json.dumps(summary, indent=2, sort_keys=True))
         return 0
     parser.error(f"unknown command: {args.command}")
     return 2

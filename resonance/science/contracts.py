@@ -55,6 +55,7 @@ class TargetTransform(str, Enum):
 
 MetricId = Annotated[str, Field(min_length=1, pattern=r"^[A-Za-z_][A-Za-z0-9_.:-]*$")]
 ParameterId = Annotated[str, Field(min_length=1, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")]
+SnapshotMetricCatalogId = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
 class MetricNode(StrictModel):
@@ -216,6 +217,7 @@ class HypothesisSpec(StrictModel):
     complexity_budget: ComplexityBudget = Field(default_factory=ComplexityBudget)
     origin: Origin
     parent_hypothesis_ids: tuple[str, ...] = Field(default_factory=tuple)
+    snapshot_metric_catalog_id: SnapshotMetricCatalogId | None = None
     random_seed: int
 
     @model_validator(mode="after")
@@ -269,14 +271,52 @@ class HypothesisSpec(StrictModel):
     def hypothesis_hash(self) -> str:
         return stable_hash(self.scientific_content())
 
-    def validate_metric_catalog(self, metric_catalog: set[str] | frozenset[str] | tuple[str, ...] | list[str]) -> None:
-        catalog = set(metric_catalog)
+    def validate_metric_catalog(self, metric_catalog: Any) -> None:
+        catalog = metric_catalog_names(metric_catalog)
+        catalog_id = metric_catalog_id(metric_catalog)
+        if self.snapshot_metric_catalog_id is not None and catalog_id is not None:
+            if self.snapshot_metric_catalog_id != catalog_id:
+                raise ValueError("snapshot metric catalog id does not match supplied catalog")
         referenced = {self.target_metric, *self.input_metrics}
         referenced.update(control.metric for control in self.negative_controls)
         unknown = referenced - catalog
         if unknown:
             names = ", ".join(sorted(unknown))
             raise ValueError(f"unknown metrics: {names}")
+
+
+def metric_catalog_id(metric_catalog: Any) -> str | None:
+    if isinstance(metric_catalog, dict):
+        value = metric_catalog.get("catalog_id")
+        if value is not None:
+            return str(value)
+    return None
+
+
+def metric_catalog_names(metric_catalog: Any) -> set[str]:
+    if isinstance(metric_catalog, dict):
+        if "metric_names" in metric_catalog:
+            names = metric_catalog["metric_names"]
+        elif "selected_metrics" in metric_catalog:
+            names = metric_catalog["selected_metrics"]
+        elif "metrics" in metric_catalog:
+            metrics = metric_catalog["metrics"]
+            if isinstance(metrics, dict):
+                names = metrics.keys()
+            else:
+                names = [
+                    metric["name"]
+                    for metric in metrics
+                    if isinstance(metric, dict) and "name" in metric
+                ]
+        else:
+            names = metric_catalog.keys()
+    else:
+        names = metric_catalog
+    try:
+        return {str(name) for name in names}
+    except TypeError as exc:
+        raise TypeError("metric_catalog must be a metric collection or snapshot catalog") from exc
 
 
 def expression_node_count(expression: Expression) -> int:
@@ -375,5 +415,7 @@ __all__ = [
     "expression_node_count",
     "expression_parameters",
     "expression_lag_seconds",
+    "metric_catalog_id",
+    "metric_catalog_names",
     "stable_hash",
 ]

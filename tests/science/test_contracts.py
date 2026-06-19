@@ -51,6 +51,46 @@ def test_unknown_metrics_can_be_rejected_against_supplied_catalog() -> None:
         )
 
 
+def test_snapshot_metric_catalog_can_validate_hypothesis_references() -> None:
+    payload = _valid_hypothesis()
+    catalog = {
+        "catalog_id": "a" * 64,
+        "metric_names": [
+            "battery_percent",
+            "cpu_percent",
+            "memory_percent",
+            "temperature_2m",
+        ],
+        "metrics": [],
+    }
+    payload["snapshot_metric_catalog_id"] = catalog["catalog_id"]
+
+    spec = HypothesisSpec.model_validate(payload, context={"metric_catalog": catalog})
+
+    assert spec.snapshot_metric_catalog_id == catalog["catalog_id"]
+
+
+def test_snapshot_metric_catalog_id_must_match_supplied_catalog() -> None:
+    payload = _valid_hypothesis()
+    payload["snapshot_metric_catalog_id"] = "b" * 64
+
+    with pytest.raises(ValidationError, match="catalog id"):
+        HypothesisSpec.model_validate(
+            payload,
+            context={
+                "metric_catalog": {
+                    "catalog_id": "a" * 64,
+                    "metric_names": [
+                        "battery_percent",
+                        "cpu_percent",
+                        "memory_percent",
+                        "temperature_2m",
+                    ],
+                }
+            },
+        )
+
+
 def test_lag_cannot_exceed_declared_maximum() -> None:
     payload = _valid_hypothesis()
     payload["maximum_lag_seconds"] = 60

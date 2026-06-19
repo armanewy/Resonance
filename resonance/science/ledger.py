@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from resonance.time_utils import ensure_utc, parse_utc, to_utc_iso, utc_now
 
@@ -177,6 +177,40 @@ def read_entries(
     return entries[-limit:]
 
 
+def verify_ledger_artifacts(
+    ledger_path: str | Path = DEFAULT_LEDGER_PATH,
+    *,
+    artifact_root: str | Path | None = None,
+) -> tuple[str, ...]:
+    """Verify path-bearing artifacts referenced by verified ledger payloads."""
+
+    entries = read_entries(ledger_path)
+    errors: list[str] = []
+    for entry in entries:
+        sequence_number = entry["sequence_number"]
+        payload = entry["payload"]
+        base_root = _ledger_entry_artifact_root(payload, artifact_root)
+        for label, reference in _iter_artifact_references(payload):
+            path_value = reference.get("path")
+            digest = reference.get("sha256")
+            if not isinstance(path_value, str) or not isinstance(digest, str):
+                errors.append(f"entry {sequence_number} {label}: artifact reference must include path and sha256")
+                continue
+            path = Path(path_value)
+            if not path.is_absolute():
+                if base_root is None:
+                    errors.append(f"entry {sequence_number} {label}: relative path has no artifact root")
+                    continue
+                path = base_root / path
+            if not path.exists():
+                errors.append(f"entry {sequence_number} {label}: missing artifact {path}")
+                continue
+            actual = _file_sha256(path)
+            if actual != digest:
+                errors.append(f"entry {sequence_number} {label}: hash mismatch for {path}")
+    return tuple(errors)
+
+
 def current_code_commit() -> str:
     try:
         result = subprocess.run(
@@ -338,6 +372,38 @@ def _normalize_artifact_hashes(value: Mapping[str, str]) -> dict[str, str]:
         if not isinstance(artifact_hash, str) or not artifact_hash:
             raise TypeError(f"artifact hash for {key!r} must be a non-empty string")
     return normalized
+
+
+def _ledger_entry_artifact_root(
+    payload: Mapping[str, Any],
+    override_root: str | Path | None,
+) -> Path | None:
+    if override_root is not None:
+        return Path(override_root)
+    root = payload.get("artifact_root")
+    if isinstance(root, str) and root:
+        return Path(root)
+    return None
+
+
+def _iter_artifact_references(value: Any, prefix: str = "payload") -> Iterable[tuple[str, Mapping[str, Any]]]:
+    if isinstance(value, Mapping):
+        if "path" in value and "sha256" in value:
+            yield prefix, value
+            return
+        for key, child in value.items():
+            yield from _iter_artifact_references(child, f"{prefix}.{key}")
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            yield from _iter_artifact_references(child, f"{prefix}[{index}]")
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _validate_event_type(event_type: str) -> None:

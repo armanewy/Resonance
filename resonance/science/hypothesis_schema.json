@@ -1600,6 +1600,19 @@
       "title": "Schema Version",
       "type": "string"
     },
+    "snapshot_metric_catalog_id": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Snapshot Metric Catalog Id"
+    },
     "target_metric": {
       "minLength": 1,
       "pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$",
