@@ -1,0 +1,14 @@
+[location]
+name = "Framingham, Massachusetts"
+latitude = 42.2793
+longitude = -71.4162
+timezone = "America/New_York"
+
+[collection]
+personal_interval_seconds = 30
+weather_interval_seconds = 900
+tcp_test_host = "1.1.1.1"
+tcp_test_port = 443
+dns_test_hostname = "example.com"
+router_host = ""
+

@@ -1,0 +1,111 @@
+# Resonance
+
+Resonance is a compact local-only prototype that collects personal computer/network signals plus local Open-Meteo weather observations, stores them in SQLite, and renders time-series graphs in Streamlit.
+
+It does not do correlation discovery, alerts, accounts, cloud deployment, or background OS service installation.
+
+## Setup
+
+Use Python 3.11 or newer.
+
+```powershell
+cd C:\Users\aoztu\Downloads\Resonance
+python -m venv .venv
+.\.venv\Scripts\python -m pip install --upgrade pip
+.\.venv\Scripts\python -m pip install -r requirements.txt
+```
+
+On macOS or Linux, activate the environment with `source .venv/bin/activate` and use `python -m pip install -r requirements.txt`.
+
+## Configure Location
+
+Edit `config.toml`:
+
+```toml
+[location]
+name = "Framingham, Massachusetts"
+latitude = 42.2793
+longitude = -71.4162
+timezone = "America/New_York"
+
+[collection]
+personal_interval_seconds = 30
+weather_interval_seconds = 900
+tcp_test_host = "1.1.1.1"
+tcp_test_port = 443
+dns_test_hostname = "example.com"
+router_host = ""
+```
+
+The database is created at `data/resonance.db`. The dashboard binds to `127.0.0.1` only.
+
+## Run
+
+Start the collector and dashboard together:
+
+```powershell
+python run_local.py
+```
+
+Open:
+
+```text
+http://127.0.0.1:8501
+```
+
+Stop both processes with `Ctrl+C`.
+
+Run the collector and dashboard separately:
+
+```powershell
+python -m resonance.collector
+streamlit run resonance/dashboard.py --server.address=127.0.0.1
+```
+
+## Demo Data
+
+Generate synthetic demo data explicitly:
+
+```powershell
+python -m resonance.seed_demo
+```
+
+Demo measurements use `source = "demo"` and are replaced each time you run the seeder.
+
+Remove demo data:
+
+```powershell
+python -m resonance.seed_demo --clear
+```
+
+## Tests
+
+```powershell
+pytest
+```
+
+Tests do not require Internet access.
+
+## Inspect Data
+
+Count real personal samples by metric:
+
+```powershell
+python -c "import sqlite3; c=sqlite3.connect('data/resonance.db'); print(c.execute(\"select metric, count(*) from measurements where source='personal' group by metric order by metric\").fetchall()); c.close()"
+```
+
+Count real weather samples:
+
+```powershell
+python -c "import sqlite3; c=sqlite3.connect('data/resonance.db'); print(c.execute(\"select metric, count(*) from measurements where source='open-meteo' group by metric order by metric\").fetchall()); c.close()"
+```
+
+## Data Boundaries
+
+All data stays on the local machine except:
+
+- Open-Meteo forecast API requests for configured latitude and longitude.
+- TCP connectivity test to `tcp_test_host:tcp_test_port`.
+- DNS lookup for `dns_test_hostname`.
+
+No telemetry is sent by this application. Streamlit usage stats are disabled in `.streamlit/config.toml`.
