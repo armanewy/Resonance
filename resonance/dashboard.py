@@ -10,6 +10,12 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
+from resonance.analysis.service import (
+    MetricPairAnalysis,
+    ValidationOptions,
+    analyze_metric_pair,
+    list_analyzable_metrics,
+)
 from resonance.config import ConfigError, load_config
 from resonance.storage import (
     DEFAULT_DB_PATH,
@@ -24,6 +30,24 @@ from resonance.storage import (
     sample_counts_by_metric,
 )
 from resonance.time_utils import parse_utc, utc_now
+from resonance.ui import aligned_transformed_timeline, lag_profile, lagged_scatter, stability_chart
+from resonance.ui.pair_explorer import (
+    PAIR_EXPLORER_INTERVALS,
+    PAIR_MAX_LAGS,
+    PAIR_TRANSFORMS,
+    PairExplorerSelection,
+    coverage_rows,
+    evidence_metrics,
+    evidence_statement,
+    max_lag_steps,
+    metric_by_name,
+    metric_names,
+    pair_cadence_seconds,
+    selected_interval,
+    selected_max_lag,
+    selected_transform,
+    warning_messages,
+)
 
 
 INTERVALS = {
@@ -85,6 +109,7 @@ def main() -> None:
         _render_network(df)
         _render_weather(df)
         _render_tables(conn, start_utc, now_utc, df)
+        _render_pair_explorer(DEFAULT_DB_PATH, now_utc)
     finally:
         conn.close()
 
@@ -231,6 +256,140 @@ def _render_tables(conn, start_utc, now_utc, df: pd.DataFrame) -> None:
 
     csv_bytes = _dataframe_csv(df)
     st.download_button("Download CSV", csv_bytes, "resonance_measurements.csv", "text/csv")
+
+
+def _render_pair_explorer(database_path, now_utc) -> None:
+    st.divider()
+    st.header("Pair Explorer")
+    st.caption("Manual association check for one selected metric pair.")
+
+    interval_label = st.selectbox(
+        "Pair interval",
+        list(PAIR_EXPLORER_INTERVALS.keys()),
+        index=1,
+        key="pair_explorer_interval",
+    )
+    start_utc = now_utc - selected_interval(interval_label)
+    try:
+        metric_summaries = list_analyzable_metrics(database_path, start_utc, now_utc)
+    except (OSError, ValueError) as exc:
+        st.warning(f"Pair Explorer is unavailable: {exc}")
+        return
+
+    names = metric_names(metric_summaries)
+    if len(names) < 2:
+        st.info("Pair Explorer needs at least two metrics in the selected interval.")
+        return
+
+    summaries_by_name = metric_by_name(metric_summaries)
+    with st.form("pair_explorer_form"):
+        columns = st.columns(4)
+        x_metric = columns[0].selectbox("X metric", names, index=0)
+        y_metric = columns[1].selectbox("Y metric", names, index=1)
+        transform_label = columns[2].selectbox("Transform", list(PAIR_TRANSFORMS.keys()), index=0)
+        max_lag_label = columns[3].selectbox("Maximum lag", list(PAIR_MAX_LAGS.keys()), index=3)
+        submitted = st.form_submit_button("Analyze")
+
+    selection = PairExplorerSelection(
+        x_metric=x_metric,
+        y_metric=y_metric,
+        interval_label=interval_label,
+        transform_label=transform_label,
+        max_lag_label=max_lag_label,
+    )
+    if submitted:
+        _run_pair_explorer_analysis(database_path, start_utc, now_utc, summaries_by_name, selection)
+
+    result = st.session_state.get("pair_explorer_result")
+    if not result or result.get("selection") != selection:
+        st.info("Choose metrics and press Analyze to run the Pair Explorer.")
+        return
+
+    error = result.get("error")
+    if error:
+        st.warning(error)
+        return
+
+    analysis = result.get("analysis")
+    if analysis is not None:
+        _render_pair_explorer_result(analysis)
+
+
+def _run_pair_explorer_analysis(
+    database_path,
+    start_utc,
+    end_utc,
+    summaries_by_name,
+    selection: PairExplorerSelection,
+) -> None:
+    if selection.x_metric == selection.y_metric:
+        st.session_state["pair_explorer_result"] = {
+            "selection": selection,
+            "analysis": None,
+            "error": "Choose different X and Y metrics.",
+        }
+        return
+
+    cadence_seconds = pair_cadence_seconds(
+        summaries_by_name[selection.x_metric],
+        summaries_by_name[selection.y_metric],
+    )
+    if cadence_seconds is None:
+        st.session_state["pair_explorer_result"] = {
+            "selection": selection,
+            "analysis": None,
+            "error": "Insufficient evidence: cadence could not be inferred for both selected metrics.",
+        }
+        return
+
+    try:
+        analysis = analyze_metric_pair(
+            database_path,
+            selection.x_metric,
+            selection.y_metric,
+            start_utc,
+            end_utc,
+            selected_transform(selection.transform_label),
+            max_lag_steps=max_lag_steps(selected_max_lag(selection.max_lag_label), cadence_seconds),
+            validation_options=ValidationOptions(cadence_seconds=cadence_seconds),
+        )
+    except ValueError as exc:
+        st.session_state["pair_explorer_result"] = {
+            "selection": selection,
+            "analysis": None,
+            "error": f"Insufficient evidence: {exc}",
+        }
+        return
+
+    st.session_state["pair_explorer_result"] = {
+        "selection": selection,
+        "analysis": analysis,
+        "error": None,
+    }
+
+
+def _render_pair_explorer_result(analysis: MetricPairAnalysis) -> None:
+    for message in warning_messages(analysis):
+        st.warning(message)
+
+    statement = evidence_statement(analysis)
+    if statement.startswith("Insufficient evidence"):
+        st.warning(statement)
+    else:
+        st.info(statement)
+
+    st.subheader("Coverage and samples")
+    st.dataframe(pd.DataFrame(coverage_rows(analysis)), use_container_width=True, hide_index=True)
+
+    columns = st.columns(5)
+    for column, (label, value) in zip(columns, evidence_metrics(analysis).items()):
+        column.metric(label, value)
+
+    st.subheader("Evidence charts")
+    _show_chart(aligned_transformed_timeline(analysis))
+    _show_chart(lag_profile(analysis))
+    _show_chart(lagged_scatter(analysis))
+    _show_chart(stability_chart(analysis))
 
 
 def _rows_to_dataframe(rows, local_tz: ZoneInfo) -> pd.DataFrame:
