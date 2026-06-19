@@ -1,4 +1,4 @@
-"""Scientific-loop contracts for restricted hypotheses."""
+"""Scientific-loop contracts and helpers for Resonance."""
 
 from resonance.science.contracts import (
     SCHEMA_VERSION,

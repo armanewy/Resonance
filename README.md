@@ -131,6 +131,24 @@ Rows are normalized to UTC, sorted deterministically, and split chronologically 
 tuning, and blind partitions with an embargo around each split boundary. Missing metric
 observations are left missing; no forward filling is applied.
 
+## Scientific Ledger
+
+Scientific-loop events are appended to a tamper-evident JSON Lines ledger at `data/science/ledger.jsonl`. Entries include chained hashes, payload hashes, artifact hashes, code commit, UTC timestamp, and sequence number so edits, inserted records, reordered records, and missing middle records are detected by verification. Existing entries are not updated through the API; corrections append a later event that refers to the prior entry. This is local tamper evidence, not immutability against the machine owner.
+
+Record result identity in event payloads: dataset snapshot ID, hypothesis hash, evaluator version, random seed, parameters, metrics, and referenced graph or report artifact hashes.
+
+Verify the ledger:
+
+```powershell
+python -m resonance.science.ledger_cli verify
+```
+
+Show recent entries:
+
+```powershell
+python -m resonance.science.ledger_cli show --limit 20
+```
+
 ## Synthetic Scenarios
 
 Generate a deterministic synthetic time-series scenario:
