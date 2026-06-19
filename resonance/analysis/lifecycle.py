@@ -3,26 +3,17 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Iterable, Sequence
 
 from resonance.storage import CorrelationFinding
 from resonance.time_utils import ensure_utc, parse_utc, to_utc_iso, utc_now
 
 
-LIFECYCLE_STATUSES = ("new", "verified", "strengthened", "weakened", "broken", "expired")
+LIFECYCLE_STATUSES = ("new", "verified", "strengthened", "weakened", "broken")
 DEFAULT_LAG_TOLERANCE_SECONDS = 300
 DEFAULT_COEFFICIENT_EPSILON = 0.05
 DEFAULT_BROKEN_AFTER_FAILURES = 2
-DEFAULT_EXPIRE_AFTER = timedelta(hours=24)
-
-
-@dataclass(frozen=True)
-class FindingIdentity:
-    x_metric: str
-    y_metric: str
-    transform: str
-    lag_seconds: int | None = None
 
 
 @dataclass(frozen=True)
@@ -30,7 +21,6 @@ class LifecycleOptions:
     lag_tolerance_seconds: int = DEFAULT_LAG_TOLERANCE_SECONDS
     coefficient_epsilon: float = DEFAULT_COEFFICIENT_EPSILON
     broken_after_failures: int = DEFAULT_BROKEN_AFTER_FAILURES
-    expire_after: timedelta = DEFAULT_EXPIRE_AFTER
 
 
 @dataclass(frozen=True)
@@ -45,7 +35,6 @@ class LifecycleEvent:
     lag_seconds: int
     previous_status: str | None = None
     failure_count: int = 0
-    missing_since_utc: datetime | None = None
     discovery_rho: float | None = None
     holdout_rho: float | None = None
     corrected_q: float | None = None
@@ -65,7 +54,6 @@ class _LifecycleState:
     transform: str
     lag_seconds: int
     failure_count: int
-    missing_since_utc: datetime | None
     discovery_rho: float | None
     holdout_rho: float | None
     corrected_q: float | None
@@ -78,7 +66,6 @@ def update_finding_lifecycle(
     current_findings: Iterable[CorrelationFinding],
     *,
     previous_findings: Iterable[CorrelationFinding] = (),
-    insufficient_data: Iterable[FindingIdentity | CorrelationFinding] = (),
     scan_utc: datetime | None = None,
     options: LifecycleOptions | None = None,
 ) -> tuple[LifecycleEvent, ...]:
@@ -87,15 +74,13 @@ def update_finding_lifecycle(
     ``current_findings`` should be the findings promoted by the latest scan.
     ``previous_findings`` is optional context for callers that have scanner
     output but no lifecycle history yet. Relationships omitted from the current
-    scan are treated as validation failures unless they are listed in
-    ``insufficient_data``.
+    scan are treated as validation failures.
     """
 
     resolved_options = options or LifecycleOptions()
     _validate_options(resolved_options)
     scan_time = ensure_utc(scan_utc or utc_now()).replace(microsecond=0)
     current = tuple(current_findings)
-    missing = tuple(_identity_from(item) for item in insufficient_data)
 
     ensure_lifecycle_schema(conn)
     states = _latest_states(conn)
@@ -132,12 +117,9 @@ def update_finding_lifecycle(
     for state in states:
         if state.relationship_key in matched_keys:
             continue
-        if state.status in {"broken", "expired"}:
+        if state.status == "broken":
             continue
-        if _matches_any_identity(state, missing, resolved_options):
-            events.append(_insufficient_data_event(state, scan_time, resolved_options))
-        else:
-            events.append(_validation_failure_event(state, scan_time, resolved_options))
+        events.append(_validation_failure_event(state, scan_time, resolved_options))
 
     persisted = tuple(_insert_lifecycle_event(conn, event) for event in events)
     conn.commit()
@@ -159,7 +141,6 @@ def ensure_lifecycle_schema(conn: sqlite3.Connection) -> None:
             previous_status TEXT,
             status TEXT NOT NULL,
             failure_count INTEGER NOT NULL DEFAULT 0,
-            missing_since_utc TEXT,
             discovery_rho REAL,
             holdout_rho REAL,
             corrected_q REAL,
@@ -217,8 +198,6 @@ def _validate_options(options: LifecycleOptions) -> None:
         raise ValueError("coefficient_epsilon must be non-negative")
     if options.broken_after_failures < 1:
         raise ValueError("broken_after_failures must be at least 1")
-    if options.expire_after.total_seconds() < 0:
-        raise ValueError("expire_after must be non-negative")
 
 
 def _latest_states(conn: sqlite3.Connection) -> list[_LifecycleState]:
@@ -281,7 +260,7 @@ def _current_status(
         "previous_lag_seconds": state.lag_seconds,
         "lag_delta_seconds": int(finding.lag_seconds) - state.lag_seconds,
     }
-    if state.status in {"broken", "expired"}:
+    if state.status == "broken":
         details["recovered_from"] = state.status
         return "verified", details
 
@@ -294,28 +273,6 @@ def _current_status(
     if coefficient_delta < -options.coefficient_epsilon:
         return "weakened", details
     return "verified", details
-
-
-def _insufficient_data_event(
-    state: _LifecycleState,
-    scan_utc: datetime,
-    options: LifecycleOptions,
-) -> LifecycleEvent:
-    missing_since = state.missing_since_utc or scan_utc
-    elapsed = scan_utc - missing_since
-    status = "expired" if elapsed >= options.expire_after else "weakened"
-    return _event_from_state(
-        state,
-        status=status,
-        previous_status=state.status,
-        scan_utc=scan_utc,
-        failure_count=state.failure_count,
-        missing_since_utc=missing_since,
-        details={
-            "reason": "insufficient_data",
-            "missing_seconds": int(elapsed.total_seconds()),
-        },
-    )
 
 
 def _validation_failure_event(
@@ -331,7 +288,6 @@ def _validation_failure_event(
         previous_status=state.status,
         scan_utc=scan_utc,
         failure_count=failure_count,
-        missing_since_utc=None,
         details={
             "reason": "validation_failed",
             "broken_after_failures": options.broken_after_failures,
@@ -347,7 +303,6 @@ def _event_from_finding(
     previous_status: str | None,
     scan_utc: datetime,
     failure_count: int = 0,
-    missing_since_utc: datetime | None = None,
     details: dict | None = None,
 ) -> LifecycleEvent:
     return LifecycleEvent(
@@ -361,7 +316,6 @@ def _event_from_finding(
         transform=finding.transform,
         lag_seconds=int(finding.lag_seconds),
         failure_count=failure_count,
-        missing_since_utc=missing_since_utc,
         discovery_rho=float(finding.discovery_rho),
         holdout_rho=float(finding.holdout_rho),
         corrected_q=float(finding.corrected_q),
@@ -378,7 +332,6 @@ def _event_from_state(
     previous_status: str | None,
     scan_utc: datetime,
     failure_count: int,
-    missing_since_utc: datetime | None,
     details: dict,
 ) -> LifecycleEvent:
     return LifecycleEvent(
@@ -392,7 +345,6 @@ def _event_from_state(
         transform=state.transform,
         lag_seconds=state.lag_seconds,
         failure_count=failure_count,
-        missing_since_utc=missing_since_utc,
         discovery_rho=state.discovery_rho,
         holdout_rho=state.holdout_rho,
         corrected_q=state.corrected_q,
@@ -418,14 +370,13 @@ def _insert_lifecycle_event(conn: sqlite3.Connection, event: LifecycleEvent) -> 
             previous_status,
             status,
             failure_count,
-            missing_since_utc,
             discovery_rho,
             holdout_rho,
             corrected_q,
             stability,
             overlap_count,
             details_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event.relationship_key,
@@ -438,7 +389,6 @@ def _insert_lifecycle_event(conn: sqlite3.Connection, event: LifecycleEvent) -> 
             event.previous_status,
             event.status,
             int(event.failure_count),
-            to_utc_iso(event.missing_since_utc) if event.missing_since_utc else None,
             event.discovery_rho,
             event.holdout_rho,
             event.corrected_q,
@@ -460,7 +410,6 @@ def _state_from_finding(finding: CorrelationFinding) -> _LifecycleState:
         transform=finding.transform,
         lag_seconds=int(finding.lag_seconds),
         failure_count=0,
-        missing_since_utc=None,
         discovery_rho=float(finding.discovery_rho),
         holdout_rho=float(finding.holdout_rho),
         corrected_q=float(finding.corrected_q),
@@ -479,7 +428,6 @@ def _state_from_row(row: sqlite3.Row) -> _LifecycleState:
         transform=row["transform"],
         lag_seconds=int(row["lag_seconds"]),
         failure_count=int(row["failure_count"]),
-        missing_since_utc=parse_utc(row["missing_since_utc"]) if row["missing_since_utc"] else None,
         discovery_rho=_optional_float(row["discovery_rho"]),
         holdout_rho=_optional_float(row["holdout_rho"]),
         corrected_q=_optional_float(row["corrected_q"]),
@@ -501,7 +449,6 @@ def _event_from_row(row: sqlite3.Row) -> LifecycleEvent:
         transform=row["transform"],
         lag_seconds=int(row["lag_seconds"]),
         failure_count=int(row["failure_count"]),
-        missing_since_utc=parse_utc(row["missing_since_utc"]) if row["missing_since_utc"] else None,
         discovery_rho=_optional_float(row["discovery_rho"]),
         holdout_rho=_optional_float(row["holdout_rho"]),
         corrected_q=_optional_float(row["corrected_q"]),
@@ -517,41 +464,6 @@ def _optional_float(value: object) -> float | None:
     return float(value)
 
 
-def _identity_from(item: FindingIdentity | CorrelationFinding) -> FindingIdentity:
-    if isinstance(item, FindingIdentity):
-        return item
-    return FindingIdentity(
-        x_metric=item.x_metric,
-        y_metric=item.y_metric,
-        transform=item.transform,
-        lag_seconds=int(item.lag_seconds),
-    )
-
-
-def _matches_any_identity(
-    state: _LifecycleState,
-    identities: Sequence[FindingIdentity],
-    options: LifecycleOptions,
-) -> bool:
-    return any(_matches_identity(state, identity, options) for identity in identities)
-
-
-def _matches_identity(
-    state: _LifecycleState,
-    identity: FindingIdentity,
-    options: LifecycleOptions,
-) -> bool:
-    if state.x_metric != identity.x_metric:
-        return False
-    if state.y_metric != identity.y_metric:
-        return False
-    if state.transform != identity.transform:
-        return False
-    if identity.lag_seconds is None:
-        return True
-    return abs(state.lag_seconds - identity.lag_seconds) <= options.lag_tolerance_seconds
-
-
 def _relationship_key(finding: CorrelationFinding) -> str:
     return "|".join(
         (
@@ -564,7 +476,6 @@ def _relationship_key(finding: CorrelationFinding) -> str:
 
 
 __all__ = [
-    "FindingIdentity",
     "LifecycleEvent",
     "LifecycleOptions",
     "ensure_lifecycle_schema",
