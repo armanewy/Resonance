@@ -10,10 +10,11 @@ from resonance.storage import CorrelationFinding
 from resonance.time_utils import ensure_utc, parse_utc, to_utc_iso, utc_now
 
 
-LIFECYCLE_STATUSES = ("new", "verified", "strengthened", "weakened", "broken")
+LIFECYCLE_STATUSES = ("incubating", "new", "verified", "strengthened", "weakened", "broken")
 DEFAULT_LAG_TOLERANCE_SECONDS = 300
 DEFAULT_COEFFICIENT_EPSILON = 0.05
 DEFAULT_BROKEN_AFTER_FAILURES = 2
+DEFAULT_PROSPECTIVE_REQUIRED_EPISODES = 3
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,7 @@ class LifecycleOptions:
     lag_tolerance_seconds: int = DEFAULT_LAG_TOLERANCE_SECONDS
     coefficient_epsilon: float = DEFAULT_COEFFICIENT_EPSILON
     broken_after_failures: int = DEFAULT_BROKEN_AFTER_FAILURES
+    prospective_required_episodes: int = DEFAULT_PROSPECTIVE_REQUIRED_EPISODES
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,7 @@ class _LifecycleState:
     corrected_q: float | None
     stability: float | None
     overlap_count: int | None
+    details: dict = field(default_factory=dict)
 
 
 def update_finding_lifecycle(
@@ -92,13 +95,20 @@ def update_finding_lifecycle(
     for finding in current:
         state = _match_state(finding, states, matched_keys, resolved_options)
         if state is None:
+            aligned_end = _finding_aligned_end(finding)
             event = _event_from_finding(
                 finding,
                 relationship_key=_relationship_key(finding),
-                status="new",
+                status="incubating",
                 previous_status=None,
                 scan_utc=scan_time,
-                details={"reason": "first_seen"},
+                details={
+                    "reason": "historical_discovery_incubating",
+                    "prospective_episode_count": 0,
+                    "prospective_required_episodes": resolved_options.prospective_required_episodes,
+                    "prospective_anchor_end_utc": to_utc_iso(aligned_end) if aligned_end else None,
+                    "prospective_latest_end_utc": to_utc_iso(aligned_end) if aligned_end else None,
+                },
             )
         else:
             matched_keys.add(state.relationship_key)
@@ -198,6 +208,8 @@ def _validate_options(options: LifecycleOptions) -> None:
         raise ValueError("coefficient_epsilon must be non-negative")
     if options.broken_after_failures < 1:
         raise ValueError("broken_after_failures must be at least 1")
+    if options.prospective_required_episodes < 1:
+        raise ValueError("prospective_required_episodes must be at least 1")
 
 
 def _latest_states(conn: sqlite3.Connection) -> list[_LifecycleState]:
@@ -255,6 +267,9 @@ def _current_status(
     finding: CorrelationFinding,
     options: LifecycleOptions,
 ) -> tuple[str, dict]:
+    if state.status == "incubating":
+        return _incubation_status(state, finding, options)
+
     details = {
         "reason": "matched_current_scan",
         "previous_lag_seconds": state.lag_seconds,
@@ -275,11 +290,53 @@ def _current_status(
     return "verified", details
 
 
+def _incubation_status(
+    state: _LifecycleState,
+    finding: CorrelationFinding,
+    options: LifecycleOptions,
+) -> tuple[str, dict]:
+    previous_count = int(state.details.get("prospective_episode_count") or 0)
+    previous_latest_end = _optional_timestamp(state.details.get("prospective_latest_end_utc"))
+    current_end = _finding_aligned_end(finding)
+    new_episode = current_end is not None and (
+        previous_latest_end is None or current_end > previous_latest_end
+    )
+    episode_count = previous_count + (1 if new_episode else 0)
+    latest_end = current_end if new_episode else previous_latest_end
+    details = {
+        "reason": "prospective_verification_pending",
+        "previous_lag_seconds": state.lag_seconds,
+        "lag_delta_seconds": int(finding.lag_seconds) - state.lag_seconds,
+        "prospective_episode_count": episode_count,
+        "prospective_required_episodes": options.prospective_required_episodes,
+        "prospective_anchor_end_utc": state.details.get("prospective_anchor_end_utc"),
+        "prospective_latest_end_utc": to_utc_iso(latest_end) if latest_end else None,
+        "new_unseen_episode": new_episode,
+    }
+    if episode_count >= options.prospective_required_episodes:
+        details["reason"] = "prospective_verification_satisfied"
+        return "new", details
+    return "incubating", details
+
+
 def _validation_failure_event(
     state: _LifecycleState,
     scan_utc: datetime,
     options: LifecycleOptions,
 ) -> LifecycleEvent:
+    if state.status == "incubating":
+        return _event_from_state(
+            state,
+            status="incubating",
+            previous_status=state.status,
+            scan_utc=scan_utc,
+            failure_count=state.failure_count + 1,
+            details={
+                **state.details,
+                "reason": "prospective_verification_missing_current_scan",
+                "prospective_required_episodes": options.prospective_required_episodes,
+            },
+        )
     failure_count = state.failure_count + 1
     status = "broken" if failure_count >= options.broken_after_failures else "weakened"
     return _event_from_state(
@@ -415,6 +472,7 @@ def _state_from_finding(finding: CorrelationFinding) -> _LifecycleState:
         corrected_q=float(finding.corrected_q),
         stability=float(finding.stability),
         overlap_count=int(finding.overlap_count),
+        details={},
     )
 
 
@@ -433,6 +491,7 @@ def _state_from_row(row: sqlite3.Row) -> _LifecycleState:
         corrected_q=_optional_float(row["corrected_q"]),
         stability=_optional_float(row["stability"]),
         overlap_count=int(row["overlap_count"]) if row["overlap_count"] is not None else None,
+        details=json.loads(row["details_json"] or "{}"),
     )
 
 
@@ -462,6 +521,20 @@ def _optional_float(value: object) -> float | None:
     if value is None:
         return None
     return float(value)
+
+
+def _optional_timestamp(value: object) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return parse_utc(str(value))
+    except ValueError:
+        return None
+
+
+def _finding_aligned_end(finding: CorrelationFinding) -> datetime | None:
+    evidence = finding.evidence if isinstance(finding.evidence, dict) else {}
+    return _optional_timestamp(evidence.get("aligned_end_utc"))
 
 
 def _relationship_key(finding: CorrelationFinding) -> str:

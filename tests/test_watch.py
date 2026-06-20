@@ -14,15 +14,21 @@ NOW = datetime(2026, 6, 19, 12, 0, tzinfo=timezone.utc)
 def test_run_scan_cycle_applies_lifecycle_and_notification_adapter(tmp_path) -> None:
     db_path = tmp_path / "resonance.db"
     notification_events = []
+    findings = [
+        _finding(holdout_rho=0.72, aligned_end_utc=NOW),
+        _finding(holdout_rho=0.72, aligned_end_utc=NOW + timedelta(hours=6)),
+        _finding(holdout_rho=0.72, aligned_end_utc=NOW + timedelta(hours=12)),
+        _finding(holdout_rho=0.72, aligned_end_utc=NOW + timedelta(hours=18)),
+    ]
 
     def scanner(*_args, **_kwargs):
-        return (_finding(holdout_rho=0.72),)
+        return (findings.pop(0),)
 
     def notifier(event, _config, *, now):
         notification_events.append((event, now))
         return NotificationResult(sent=True, skipped=False, reason="sent", destination="test")
 
-    result = run_scan_cycle(
+    first = run_scan_cycle(
         db_path,
         hours=168,
         notification_config=_notification_config(tmp_path),
@@ -30,17 +36,50 @@ def test_run_scan_cycle_applies_lifecycle_and_notification_adapter(tmp_path) -> 
         notifier=notifier,
         scan_utc=NOW,
     )
+    second = run_scan_cycle(
+        db_path,
+        hours=168,
+        notification_config=_notification_config(tmp_path),
+        scanner=scanner,
+        notifier=notifier,
+        scan_utc=NOW + timedelta(hours=6),
+    )
+    third = run_scan_cycle(
+        db_path,
+        hours=168,
+        notification_config=_notification_config(tmp_path),
+        scanner=scanner,
+        notifier=notifier,
+        scan_utc=NOW + timedelta(hours=12),
+    )
+    promoted = run_scan_cycle(
+        db_path,
+        hours=168,
+        notification_config=_notification_config(tmp_path),
+        scanner=scanner,
+        notifier=notifier,
+        scan_utc=NOW + timedelta(hours=18),
+    )
 
-    assert [event.status for event in result.lifecycle_events] == ["new"]
-    assert len(result.notification_results) == 1
+    assert [event.status for event in first.lifecycle_events] == ["incubating"]
+    assert [event.status for event in second.lifecycle_events] == ["incubating"]
+    assert [event.status for event in third.lifecycle_events] == ["incubating"]
+    assert [event.status for event in promoted.lifecycle_events] == ["new"]
+    assert len(promoted.notification_results) == 1
     assert notification_events[0][0].event_type == NEW_VERIFIED_RELATIONSHIP
-    assert notification_events[0][1] == NOW
+    assert notification_events[0][1] == NOW + timedelta(hours=18)
 
 
 def test_run_scan_cycle_notifies_major_strengthening(tmp_path) -> None:
     db_path = tmp_path / "resonance.db"
     notification_events = []
-    findings = [_finding(holdout_rho=0.60), _finding(holdout_rho=0.86)]
+    findings = [
+        _finding(holdout_rho=0.60, aligned_end_utc=NOW),
+        _finding(holdout_rho=0.60, aligned_end_utc=NOW + timedelta(hours=6)),
+        _finding(holdout_rho=0.60, aligned_end_utc=NOW + timedelta(hours=12)),
+        _finding(holdout_rho=0.60, aligned_end_utc=NOW + timedelta(hours=18)),
+        _finding(holdout_rho=0.86, aligned_end_utc=NOW + timedelta(hours=24)),
+    ]
 
     def scanner(*_args, **_kwargs):
         return (findings.pop(0),)
@@ -57,13 +96,37 @@ def test_run_scan_cycle_notifies_major_strengthening(tmp_path) -> None:
         notifier=notifier,
         scan_utc=NOW,
     )
-    result = run_scan_cycle(
+    run_scan_cycle(
         db_path,
         hours=168,
         notification_config=_notification_config(tmp_path),
         scanner=scanner,
         notifier=notifier,
         scan_utc=NOW + timedelta(hours=6),
+    )
+    run_scan_cycle(
+        db_path,
+        hours=168,
+        notification_config=_notification_config(tmp_path),
+        scanner=scanner,
+        notifier=notifier,
+        scan_utc=NOW + timedelta(hours=12),
+    )
+    run_scan_cycle(
+        db_path,
+        hours=168,
+        notification_config=_notification_config(tmp_path),
+        scanner=scanner,
+        notifier=notifier,
+        scan_utc=NOW + timedelta(hours=18),
+    )
+    result = run_scan_cycle(
+        db_path,
+        hours=168,
+        notification_config=_notification_config(tmp_path),
+        scanner=scanner,
+        notifier=notifier,
+        scan_utc=NOW + timedelta(hours=24),
     )
 
     assert [event.status for event in result.lifecycle_events] == ["strengthened"]
@@ -116,7 +179,7 @@ def _notification_config(tmp_path) -> NotificationConfig:
     )
 
 
-def _finding(*, holdout_rho: float) -> CorrelationFinding:
+def _finding(*, holdout_rho: float, aligned_end_utc: datetime = NOW) -> CorrelationFinding:
     return CorrelationFinding(
         x_metric="cpu_percent",
         y_metric="tcp_latency_ms",
@@ -130,5 +193,5 @@ def _finding(*, holdout_rho: float) -> CorrelationFinding:
         first_seen_utc=NOW - timedelta(days=1),
         last_verified_utc=NOW,
         status="active",
-        evidence={"association_only": True},
+        evidence={"association_only": True, "aligned_end_utc": aligned_end_utc.isoformat().replace("+00:00", "Z")},
     )

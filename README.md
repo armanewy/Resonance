@@ -100,7 +100,7 @@ Continuously re-evaluate existing/new findings in a separate process:
 python -m resonance.watch
 ```
 
-Notifications are disabled by default and are limited to lifecycle events such as a new verified relationship or a previously stable relationship breaking. Public-involved historical discoveries stay out of this persisted path until prospective verification is added.
+Notifications are disabled by default and are limited to lifecycle events such as a new verified relationship or a previously stable relationship breaking. Historical scanner discoveries first enter incubation; Resonance requires three later scans with newly advanced aligned data before emitting the first new-relationship notification.
 
 ## Synthetic truth scenarios
 
