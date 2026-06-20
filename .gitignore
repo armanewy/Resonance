@@ -15,4 +15,4 @@ build/
 .stress_lab/
 data/
 runs/
-reports-*.json
+reports-*
