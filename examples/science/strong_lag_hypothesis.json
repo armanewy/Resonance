@@ -1,0 +1,78 @@
+{
+  "blind_metrics": [
+    "mae",
+    "rmse",
+    "spearman_r"
+  ],
+  "complexity_budget": {
+    "max_ast_nodes": 8,
+    "max_source_metrics": 1
+  },
+  "concise_claim": "Lagged synthetic x predicts y in this dataset.",
+  "expected_direction": "positive",
+  "expression": {
+    "left": {
+      "left": {
+        "node": "fitted_parameter",
+        "parameter": "scale"
+      },
+      "node": "multiply",
+      "right": {
+        "input": {
+          "metric": "x",
+          "node": "metric"
+        },
+        "lag_seconds": 900,
+        "node": "lag"
+      }
+    },
+    "node": "add",
+    "right": {
+      "node": "fitted_parameter",
+      "parameter": "offset"
+    }
+  },
+  "falsification_conditions": [
+    {
+      "description": "Blind error does not improve over the frozen tuning persistence baseline."
+    },
+    {
+      "description": "The independent control metric is associated with the prediction."
+    },
+    {
+      "description": "The blind rank association is below the preregistered effect threshold."
+    }
+  ],
+  "fitting_metric": "rmse",
+  "hypothesis_type": "observational_prediction",
+  "input_metrics": [
+    "x"
+  ],
+  "maximum_lag_seconds": 900,
+  "minimum_baseline_improvement": 0.05,
+  "minimum_blind_effect": 0.5,
+  "negative_controls": [
+    {
+      "metric": "control",
+      "rationale": "The generated control series is independent synthetic noise and should not track the prediction."
+    }
+  ],
+  "origin": "manual",
+  "parameter_bounds": {
+    "offset": {
+      "lower": -5.0,
+      "upper": 5.0
+    },
+    "scale": {
+      "lower": 0.0,
+      "upper": 3.0
+    }
+  },
+  "random_seed": 20260619,
+  "rationale": "The strong-lag synthetic scenario is generated so y follows x after a fixed 900 second lag plus independent noise.",
+  "schema_version": "1.0",
+  "target_metric": "y",
+  "target_transform": "identity",
+  "title": "Strong lag synthetic x predicts y",
+  "tuning_metric": "rmse"
+}
