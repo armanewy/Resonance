@@ -204,6 +204,20 @@ tuning, selecting at most one default candidate. It does not preregister or run
 blind evaluation; use the existing `preregister`, `blind-evaluate`, and
 `report` commands for those sealed steps.
 
+### LLM Ablation Comparison
+
+Compare the mock LLM generator with deterministic baselines on fresh synthetic
+snapshots:
+
+```powershell
+python -m resonance.science.cli ablate --scenarios strong_lag,shared_seasonality_only --provider mock --seed 123
+```
+
+The ablation uses pairwise lag, seeded random DSL, simple linear-combination,
+and persistence/zero-residual baselines with a comparable candidate budget. By
+default it fits on exploration, selects on tuning, records artifacts and ledger
+entries, and does not load or spend blind data.
+
 ### Optional Hypothesis Providers
 
 Science provider adapters are library-level helpers for proposing structured
