@@ -112,6 +112,8 @@ def test_analyze_pair_cli_emits_json(tmp_path) -> None:
             "60",
             "--database",
             str(db_path),
+            "--now-utc",
+            "2026-06-19T12:00:00Z",
             "--json",
         ],
         check=False,

@@ -220,10 +220,15 @@ def main(argv: Sequence[str] | None = None, *, now: datetime | None = None) -> i
         default=str(DEFAULT_DB_PATH),
         help=f"SQLite database path. Defaults to {DEFAULT_DB_PATH}.",
     )
+    parser.add_argument(
+        "--now-utc",
+        help="Override the analysis end time with an ISO UTC timestamp, for reproducible runs.",
+    )
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     args = parser.parse_args(argv)
 
     try:
+        analysis_now = parse_utc(args.now_utc) if args.now_utc else now
         report = analyze_pair(
             args.database,
             x_metric=args.x,
@@ -231,7 +236,7 @@ def main(argv: Sequence[str] | None = None, *, now: datetime | None = None) -> i
             hours=args.hours,
             transform_name=args.transform,
             max_lag_minutes=args.max_lag_minutes,
-            now=now,
+            now=analysis_now,
         )
     except ValueError as exc:
         parser.exit(2, f"Could not analyze pair: {exc}\n")
