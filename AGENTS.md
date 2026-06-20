@@ -64,6 +64,8 @@ Use `python -m resonance.science.cli --help`, `python -m resonance.science.searc
 - A lag selected on discovery data is frozen before holdout evaluation.
 - A permutation null must repeat the full lag search.
 - Automatic scans correct across the whole tested family and may return no findings.
+- Public-involved automatic scanner pairs are dry-run only until prospective verification exists.
+- Reject incompatible cadence, geography, and lineage combinations before running scanner statistics.
 - Calendar residuals use the configured location timezone.
 - Findings say `associated`, `precedes`, `follows`, or `predicts in this dataset`; never `causes` without intervention.
 

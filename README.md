@@ -92,7 +92,7 @@ Run the automatic scanner in dry-run mode:
 python -m resonance.scan --hours 168 --dry-run
 ```
 
-The scanner uses lagged Spearman association, chronological holdout, max-over-lags block permutation, time-window stability, local-time calendar residuals when sufficient history exists, and conservative Benjamini–Yekutieli false-discovery correction across the tested family. It may legitimately return no findings.
+The dry-run scanner can test compatible legacy measurements and registered public series together. Public-involved pairs are dry-run only: they are never persisted or notified from historical backfill in this milestone. Before testing, the scanner rejects incompatible cadence, geography, and lineage combinations. The scanner uses lagged Spearman association, chronological holdout, max-over-lags block permutation, time-window stability, local-time calendar residuals when sufficient history exists, and conservative Benjamini–Yekutieli false-discovery correction across the tested family. It may legitimately return no findings.
 
 Continuously re-evaluate existing/new findings in a separate process:
 
@@ -100,7 +100,7 @@ Continuously re-evaluate existing/new findings in a separate process:
 python -m resonance.watch
 ```
 
-Notifications are disabled by default and are limited to lifecycle events such as a new verified relationship or a previously stable relationship breaking.
+Notifications are disabled by default and are limited to lifecycle events such as a new verified relationship or a previously stable relationship breaking. Public-involved historical discoveries stay out of this persisted path until prospective verification is added.
 
 ## Synthetic truth scenarios
 

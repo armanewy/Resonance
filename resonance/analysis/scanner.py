@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import sqlite3
 from collections.abc import Mapping, Sequence
@@ -11,7 +12,7 @@ from typing import Any
 import pandas as pd
 
 from resonance.analysis.alignment import align_series
-from resonance.analysis.candidates import CandidateOptions, CandidatePair, select_candidate_pairs
+from resonance.analysis.candidates import CandidateOptions
 from resonance.analysis.contracts import AlignedPair, LagScanResult, ValidationResult
 from resonance.analysis.correlation import lagged_spearman
 from resonance.analysis.transforms import apply_transform
@@ -44,6 +45,37 @@ DEFAULT_PERMUTATIONS = 199
 DEFAULT_PERMUTATION_SEED = 20260619
 DEFAULT_MULTIPLE_TESTING_METHOD = "by"
 
+STATUS_UNITS = {"bool", "boolean", "code", "enum", "flag", "status"}
+STATUS_TOKENS = (
+    "success",
+    "status",
+    "state",
+    "flag",
+    "code",
+    "plugged",
+)
+DIRECT_DERIVATION_KEYS = (
+    "base_metric",
+    "derived_from",
+    "derived_from_metric",
+    "direct_derivation_of",
+    "input_metric",
+    "input_metrics",
+    "inputs",
+    "parent_metric",
+    "source_metric",
+    "source_metrics",
+)
+LOCAL_GEOGRAPHY_TYPES = {"configured_location", "device"}
+REGIONAL_GEOGRAPHY_TYPES = {
+    "balancing_authority",
+    "city",
+    "county",
+    "metro",
+    "region",
+    "state",
+}
+
 
 @dataclass(frozen=True)
 class ScannerOptions:
@@ -68,7 +100,7 @@ class ScannerOptions:
 
 @dataclass(frozen=True)
 class PairEvidence:
-    pair: CandidatePair
+    pair: "ScannerCandidatePair"
     transform: str
     lag_result: LagScanResult
     validation_result: ValidationResult
@@ -76,6 +108,59 @@ class PairEvidence:
     aligned_pair: AlignedPair
     p_value: float | None
     discovery_overlap: int
+
+
+@dataclass(frozen=True)
+class ScannerCandidateSeries:
+    identifier: str
+    source_kind: str
+    metric_name: str
+    display_name: str
+    unit: str
+    source_id: str
+    sample_count: int
+    numeric_count: int
+    cadence_seconds: int | None
+    registry_cadence_seconds: int | None
+    coverage: float | None
+    start_utc: datetime | None
+    end_utc: datetime | None
+    geography_type: str | None
+    geography_id: str | None
+    lineage_id: str | None
+    parent_series_id: str | None
+    metadata: tuple[Mapping[str, Any], ...]
+
+
+@dataclass(frozen=True)
+class ScannerCandidatePair:
+    x_metric: str
+    y_metric: str
+    cadence_seconds: int
+    aligned_bins: int
+    x_coverage: float
+    y_coverage: float
+    x_source_kind: str
+    y_source_kind: str
+    compatibility: Mapping[str, Any]
+
+    @property
+    def contains_public(self) -> bool:
+        return "public" in {self.x_source_kind, self.y_source_kind}
+
+
+@dataclass(frozen=True)
+class ScannerCandidateRejection:
+    metrics: tuple[str, ...]
+    reason: str
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class ScannerCandidateSelection:
+    series: tuple[ScannerCandidateSeries, ...]
+    pairs: tuple[ScannerCandidatePair, ...]
+    rejections: tuple[ScannerCandidateRejection, ...]
 
 
 def scan_correlations(
@@ -98,10 +183,11 @@ def scan_correlations(
     end_utc = ensure_utc(now or utc_now()).replace(microsecond=0)
     start_utc = end_utc - timedelta(hours=hours)
 
-    selection = select_candidate_pairs(
+    selection = _select_scanner_candidate_pairs(
         database_path,
         start_utc,
         end_utc,
+        include_public=dry_run,
         options=CandidateOptions(
             min_observations=resolved_options.min_aligned_observations,
             min_coverage=resolved_options.min_coverage,
@@ -247,14 +333,481 @@ def _validate_options(options: ScannerOptions) -> None:
         raise ValueError(f"calendar_timezone is not recognized: {options.calendar_timezone}") from exc
 
 
+def _select_scanner_candidate_pairs(
+    database_path: str | Path,
+    start_utc: datetime,
+    end_utc: datetime,
+    *,
+    include_public: bool,
+    options: CandidateOptions | Mapping[str, Any] | None = None,
+) -> ScannerCandidateSelection:
+    start, end = _normalize_interval(start_utc, end_utc)
+    resolved_options = _candidate_options(options)
+    _validate_candidate_options(resolved_options)
+
+    with _connect_read_only(Path(database_path)) as conn:
+        _require_measurements_table(conn)
+        rows = _fetch_scanner_rows(conn, start, end, include_public=include_public)
+
+    grouped: dict[str, list[Mapping[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(str(row["metric"]), []).append(row)
+
+    rejections: list[ScannerCandidateRejection] = []
+    all_series = tuple(
+        _scanner_series_profile(identifier, series_rows, interval_start=start, interval_end=end)
+        for identifier, series_rows in sorted(grouped.items())
+    )
+    eligible: list[ScannerCandidateSeries] = []
+    for series in all_series:
+        reason = _series_rejection_reason(series, resolved_options)
+        if reason is None:
+            eligible.append(series)
+        else:
+            rejections.append(ScannerCandidateRejection((series.identifier,), reason))
+
+    by_identifier = {series.identifier: series for series in eligible}
+    pairs: list[ScannerCandidatePair] = []
+    for left, right in _canonical_pair_names(tuple(by_identifier)):
+        x_series = by_identifier[left]
+        y_series = by_identifier[right]
+        rejection = _scanner_pair_rejection_reason(x_series, y_series, rows, resolved_options)
+        if rejection is not None:
+            rejections.append(rejection)
+            continue
+
+        cadence = max(int(x_series.cadence_seconds or 0), int(y_series.cadence_seconds or 0))
+        aligned_bins = _aligned_bin_count(rows, left, right, cadence)
+        pairs.append(
+            ScannerCandidatePair(
+                x_metric=left,
+                y_metric=right,
+                cadence_seconds=cadence,
+                aligned_bins=aligned_bins,
+                x_coverage=float(x_series.coverage or 0.0),
+                y_coverage=float(y_series.coverage or 0.0),
+                x_source_kind=x_series.source_kind,
+                y_source_kind=y_series.source_kind,
+                compatibility={
+                    "cadence": _cadence_relation(x_series, y_series),
+                    "geography": _geography_relation(x_series, y_series),
+                    "lineage": "independent",
+                    "dry_run_only": x_series.source_kind == "public" or y_series.source_kind == "public",
+                },
+            )
+        )
+
+    return ScannerCandidateSelection(
+        series=tuple(eligible),
+        pairs=tuple(pairs),
+        rejections=tuple(rejections),
+    )
+
+
+def _candidate_options(options: CandidateOptions | Mapping[str, Any] | None) -> CandidateOptions:
+    if options is None:
+        return CandidateOptions()
+    if isinstance(options, CandidateOptions):
+        return options
+    return CandidateOptions(**dict(options))
+
+
+def _validate_candidate_options(options: CandidateOptions) -> None:
+    if options.min_observations < 2:
+        raise ValueError("min_observations must be at least 2")
+    if not 0 <= options.min_coverage <= 1:
+        raise ValueError("min_coverage must be between 0 and 1")
+    if options.min_aligned_bins < 2:
+        raise ValueError("min_aligned_bins must be at least 2")
+
+
+def _normalize_interval(start_utc: datetime, end_utc: datetime) -> tuple[datetime, datetime]:
+    start = ensure_utc(start_utc).replace(microsecond=0)
+    end = ensure_utc(end_utc).replace(microsecond=0)
+    if start >= end:
+        raise ValueError("start_utc must be before end_utc")
+    return start, end
+
+
+def _require_measurements_table(conn: sqlite3.Connection) -> None:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table' AND name = 'measurements'
+        LIMIT 1
+        """
+    ).fetchone()
+    if row is None:
+        raise ValueError("measurements table not found")
+
+
+def _has_table(conn: sqlite3.Connection, name: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table' AND name = ?
+        LIMIT 1
+        """,
+        (name,),
+    ).fetchone()
+    return row is not None
+
+
+def _fetch_scanner_rows(
+    conn: sqlite3.Connection,
+    start_utc: datetime,
+    end_utc: datetime,
+    *,
+    include_public: bool,
+) -> list[Mapping[str, Any]]:
+    rows = _fetch_measurement_scanner_rows(conn, start_utc, end_utc)
+    if include_public and _has_table(conn, "public_observations") and _has_table(conn, "series_registry"):
+        rows.extend(_fetch_public_scanner_rows(conn, start_utc, end_utc))
+    return rows
+
+
+def _fetch_measurement_scanner_rows(
+    conn: sqlite3.Connection,
+    start_utc: datetime,
+    end_utc: datetime,
+) -> list[Mapping[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT m.id, m.timestamp_utc, m.metric, m.value, m.unit, m.source,
+               m.metadata_json AS row_metadata_json,
+               s.series_id, s.source_id, s.metric_name, s.display_name,
+               s.cadence_seconds AS registry_cadence_seconds,
+               s.geography_type, s.geography_id, s.lineage_id, s.parent_series_id,
+               s.metadata_json AS series_metadata_json
+        FROM measurements m
+        LEFT JOIN measurement_series_map msm
+          ON msm.source = m.source AND msm.metric = m.metric
+        LEFT JOIN series_registry s
+          ON s.series_id = msm.series_id
+        WHERE m.timestamp_utc >= ? AND m.timestamp_utc <= ?
+        ORDER BY m.metric ASC, m.timestamp_utc ASC, m.id ASC
+        """,
+        (to_utc_iso(start_utc), to_utc_iso(end_utc)),
+    ).fetchall()
+    normalized: list[Mapping[str, Any]] = []
+    for row in rows:
+        source = str(row["source"])
+        fallback_geography_type = "device" if source == "personal" else "configured_location"
+        fallback_geography_id = "local_machine" if source == "personal" else "configured_location"
+        normalized.append(
+            {
+                "metric": str(row["metric"]),
+                "timestamp_utc": row["timestamp_utc"],
+                "value": row["value"],
+                "unit": row["unit"],
+                "source_kind": "legacy",
+                "source_id": row["source_id"] or source,
+                "metric_name": row["metric_name"] or row["metric"],
+                "display_name": row["display_name"] or row["metric"],
+                "registry_cadence_seconds": row["registry_cadence_seconds"],
+                "geography_type": row["geography_type"] or fallback_geography_type,
+                "geography_id": row["geography_id"] or fallback_geography_id,
+                "lineage_id": row["lineage_id"] or row["metric"],
+                "parent_series_id": row["parent_series_id"],
+                "series_metadata_json": row["series_metadata_json"] or "{}",
+                "row_metadata_json": row["row_metadata_json"] or "{}",
+            }
+        )
+    return normalized
+
+
+def _fetch_public_scanner_rows(
+    conn: sqlite3.Connection,
+    start_utc: datetime,
+    end_utc: datetime,
+) -> list[Mapping[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT o.series_id AS metric, o.valid_start_utc AS timestamp_utc, o.value,
+               s.unit, s.source_id, s.metric_name, s.display_name,
+               s.cadence_seconds AS registry_cadence_seconds,
+               s.geography_type, s.geography_id, s.lineage_id, s.parent_series_id,
+               s.metadata_json AS series_metadata_json,
+               o.metadata_json AS row_metadata_json
+        FROM public_observations o
+        JOIN series_registry s ON s.series_id = o.series_id
+        WHERE o.valid_start_utc >= ?
+          AND o.valid_start_utc <= ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM public_observations newer
+              WHERE newer.series_id = o.series_id
+                AND newer.source_observation_key = o.source_observation_key
+                AND (
+                    newer.ingested_at_utc > o.ingested_at_utc
+                    OR (
+                        newer.ingested_at_utc = o.ingested_at_utc
+                        AND newer.observation_id > o.observation_id
+                    )
+                )
+          )
+        ORDER BY o.series_id ASC, o.valid_start_utc ASC, o.observation_id ASC
+        """,
+        (to_utc_iso(start_utc), to_utc_iso(end_utc)),
+    ).fetchall()
+    return [
+        {
+            "metric": str(row["metric"]),
+            "timestamp_utc": row["timestamp_utc"],
+            "value": row["value"],
+            "unit": row["unit"],
+            "source_kind": "public",
+            "source_id": row["source_id"],
+            "metric_name": row["metric_name"],
+            "display_name": row["display_name"],
+            "registry_cadence_seconds": row["registry_cadence_seconds"],
+            "geography_type": row["geography_type"],
+            "geography_id": row["geography_id"],
+            "lineage_id": row["lineage_id"],
+            "parent_series_id": row["parent_series_id"],
+            "series_metadata_json": row["series_metadata_json"] or "{}",
+            "row_metadata_json": row["row_metadata_json"] or "{}",
+        }
+        for row in rows
+    ]
+
+
+def _scanner_series_profile(
+    identifier: str,
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    interval_start: datetime,
+    interval_end: datetime,
+) -> ScannerCandidateSeries:
+    numeric_timestamps: list[datetime] = []
+    start_utc: datetime | None = None
+    end_utc: datetime | None = None
+    metadata: list[Mapping[str, Any]] = []
+    for row in rows:
+        timestamp = _optional_timestamp(row["timestamp_utc"])
+        if timestamp is not None:
+            start_utc = timestamp if start_utc is None else min(start_utc, timestamp)
+            end_utc = timestamp if end_utc is None else max(end_utc, timestamp)
+        if timestamp is not None and _optional_float(row["value"]) is not None:
+            numeric_timestamps.append(timestamp)
+        for key in ("series_metadata_json", "row_metadata_json"):
+            parsed = _parse_metadata(row.get(key))
+            if parsed:
+                metadata.append(parsed)
+
+    first = rows[0] if rows else {}
+    cadence_seconds = _infer_cadence_seconds(sorted(numeric_timestamps))
+    coverage = None
+    if cadence_seconds is not None:
+        coverage = _coverage(sorted(numeric_timestamps), cadence_seconds, interval_start, interval_end)
+    registry_cadences = {
+        int(row["registry_cadence_seconds"])
+        for row in rows
+        if row.get("registry_cadence_seconds") not in (None, "")
+    }
+    return ScannerCandidateSeries(
+        identifier=identifier,
+        source_kind=str(first.get("source_kind") or "legacy"),
+        metric_name=str(first.get("metric_name") or identifier),
+        display_name=str(first.get("display_name") or identifier),
+        unit=str(first.get("unit") or ""),
+        source_id=str(first.get("source_id") or ""),
+        sample_count=len(rows),
+        numeric_count=len(numeric_timestamps),
+        cadence_seconds=cadence_seconds,
+        registry_cadence_seconds=next(iter(registry_cadences)) if len(registry_cadences) == 1 else None,
+        coverage=coverage,
+        start_utc=start_utc,
+        end_utc=end_utc,
+        geography_type=str(first.get("geography_type") or "") or None,
+        geography_id=str(first.get("geography_id") or "") or None,
+        lineage_id=str(first.get("lineage_id") or "") or None,
+        parent_series_id=str(first.get("parent_series_id") or "") or None,
+        metadata=tuple(metadata),
+    )
+
+
+def _series_rejection_reason(series: ScannerCandidateSeries, options: CandidateOptions) -> str | None:
+    if _is_status_series(series):
+        return "status_or_flag_series"
+    if series.numeric_count != series.sample_count:
+        return "non_numeric_series"
+    if series.numeric_count < options.min_observations:
+        return "too_few_observations"
+    if series.cadence_seconds is None:
+        return "cadence_unavailable"
+    if series.registry_cadence_seconds and not _cadences_compatible(series.cadence_seconds, series.registry_cadence_seconds):
+        return "incompatible_cadence"
+    if series.coverage is None or series.coverage < options.min_coverage:
+        return "low_coverage"
+    return None
+
+
+def _is_status_series(series: ScannerCandidateSeries) -> bool:
+    if series.unit.lower() in STATUS_UNITS:
+        return True
+    normalized_tokens = [
+        token
+        for token in series.metric_name.lower().replace("-", "_").split("_")
+        if token
+    ]
+    if any(token in STATUS_TOKENS for token in normalized_tokens):
+        return True
+    for metadata in series.metadata:
+        metadata_type = str(metadata.get("type") or metadata.get("kind") or "").lower()
+        if metadata_type in STATUS_UNITS:
+            return True
+    return False
+
+
+def _scanner_pair_rejection_reason(
+    x_series: ScannerCandidateSeries,
+    y_series: ScannerCandidateSeries,
+    rows: Sequence[Mapping[str, Any]],
+    options: CandidateOptions,
+) -> ScannerCandidateRejection | None:
+    metrics = (x_series.identifier, y_series.identifier)
+    if x_series.identifier == y_series.identifier:
+        return ScannerCandidateRejection(metrics, "identical_series")
+    lineage_reason = _lineage_rejection_reason(x_series, y_series)
+    if lineage_reason is not None:
+        return ScannerCandidateRejection(metrics, lineage_reason, "series share direct or declared lineage")
+    if not _geographies_compatible(x_series, y_series):
+        return ScannerCandidateRejection(metrics, "incompatible_geography", _geography_relation(x_series, y_series))
+    if not _cadences_compatible(int(x_series.cadence_seconds or 0), int(y_series.cadence_seconds or 0)):
+        return ScannerCandidateRejection(metrics, "incompatible_cadence", _cadence_relation(x_series, y_series))
+
+    cadence = max(int(x_series.cadence_seconds or 0), int(y_series.cadence_seconds or 0))
+    aligned_bins = _aligned_bin_count(rows, x_series.identifier, y_series.identifier, cadence)
+    if aligned_bins < options.min_aligned_bins:
+        return ScannerCandidateRejection(
+            metrics,
+            "too_few_aligned_bins",
+            f"coarsest compatible cadence produced {aligned_bins} aligned bins",
+        )
+    return None
+
+
+def _lineage_rejection_reason(
+    x_series: ScannerCandidateSeries,
+    y_series: ScannerCandidateSeries,
+) -> str | None:
+    if x_series.parent_series_id and x_series.parent_series_id == y_series.identifier:
+        return "direct_lineage"
+    if y_series.parent_series_id and y_series.parent_series_id == x_series.identifier:
+        return "direct_lineage"
+    if x_series.lineage_id and x_series.lineage_id == y_series.lineage_id:
+        return "shared_lineage"
+    if _metadata_names_series(x_series.metadata, _series_identity_tokens(y_series)):
+        return "direct_derivation"
+    if _metadata_names_series(y_series.metadata, _series_identity_tokens(x_series)):
+        return "direct_derivation"
+    return None
+
+
+def _series_identity_tokens(series: ScannerCandidateSeries) -> set[str]:
+    tokens = {
+        series.identifier,
+        series.metric_name,
+        series.lineage_id or "",
+        series.parent_series_id or "",
+    }
+    for metadata in series.metadata:
+        for key in ("eia_type", "eia_fuel_type", "metric_name", "series_id"):
+            if key in metadata:
+                tokens.update(_metadata_metric_names(metadata[key]))
+    return {token.lower() for token in tokens if token}
+
+
+def _metadata_names_series(metadata_values: Sequence[Mapping[str, Any]], tokens: set[str]) -> bool:
+    for metadata in metadata_values:
+        for key in DIRECT_DERIVATION_KEYS:
+            if key in metadata and tokens & _metadata_metric_names(metadata[key]):
+                return True
+    return False
+
+
+def _metadata_metric_names(value: Any) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        return {value.lower()}
+    if isinstance(value, Mapping):
+        names: set[str] = set()
+        for nested_value in value.values():
+            names.update(_metadata_metric_names(nested_value))
+        return names
+    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        names: set[str] = set()
+        for item in value:
+            names.update(_metadata_metric_names(item))
+        return names
+    return {str(value).lower()}
+
+
+def _geographies_compatible(x_series: ScannerCandidateSeries, y_series: ScannerCandidateSeries) -> bool:
+    if not (x_series.geography_type and x_series.geography_id and y_series.geography_type and y_series.geography_id):
+        return False
+    if (
+        x_series.geography_type == y_series.geography_type
+        and x_series.geography_id == y_series.geography_id
+    ):
+        return True
+    if x_series.source_kind == "public" and y_series.source_kind == "public":
+        return False
+    types = {x_series.geography_type, y_series.geography_type}
+    if types <= LOCAL_GEOGRAPHY_TYPES:
+        return True
+    return bool(types & LOCAL_GEOGRAPHY_TYPES and types & REGIONAL_GEOGRAPHY_TYPES)
+
+
+def _geography_relation(x_series: ScannerCandidateSeries, y_series: ScannerCandidateSeries) -> str:
+    if (
+        x_series.geography_type == y_series.geography_type
+        and x_series.geography_id == y_series.geography_id
+    ):
+        return "same_geography"
+    types = {x_series.geography_type or "", y_series.geography_type or ""}
+    if types <= LOCAL_GEOGRAPHY_TYPES:
+        return "local_device_context"
+    if types & LOCAL_GEOGRAPHY_TYPES and types & REGIONAL_GEOGRAPHY_TYPES:
+        return "local_to_regional_context"
+    return f"{x_series.geography_type}:{x_series.geography_id} vs {y_series.geography_type}:{y_series.geography_id}"
+
+
+def _cadences_compatible(left: int, right: int) -> bool:
+    if left <= 0 or right <= 0:
+        return False
+    coarser = max(left, right)
+    finer = min(left, right)
+    return coarser % finer == 0
+
+
+def _cadence_relation(x_series: ScannerCandidateSeries, y_series: ScannerCandidateSeries) -> str:
+    left = int(x_series.cadence_seconds or 0)
+    right = int(y_series.cadence_seconds or 0)
+    if left == right:
+        return f"same:{left}"
+    if _cadences_compatible(left, right):
+        return f"commensurate:{min(left, right)}->{max(left, right)}"
+    return f"incompatible:{left}:{right}"
+
+
+def _canonical_pair_names(metric_names: Sequence[str]) -> tuple[tuple[str, str], ...]:
+    names = sorted(dict.fromkeys(metric_names))
+    return tuple((names[left], names[right]) for left in range(len(names)) for right in range(left + 1, len(names)))
+
+
 def _evaluate_pair(
     database_path: Path,
-    pair: CandidatePair,
+    pair: ScannerCandidatePair,
     start_utc: datetime,
     end_utc: datetime,
     options: ScannerOptions,
 ) -> PairEvidence:
-    rows = _fetch_metric_rows(database_path, start_utc, end_utc, (pair.x_metric, pair.y_metric))
+    rows = _fetch_series_rows(database_path, start_utc, end_utc, (pair.x_metric, pair.y_metric))
     x_series = _series_from_rows(rows, pair.x_metric)
     y_series = _series_from_rows(rows, pair.y_metric)
     if x_series.empty or y_series.empty:
@@ -321,16 +874,18 @@ def _evaluate_pair(
     )
 
 
-def _fetch_metric_rows(
+def _fetch_series_rows(
     database_path: Path,
     start_utc: datetime,
     end_utc: datetime,
-    metrics: Sequence[str],
-) -> list[sqlite3.Row]:
+    identifiers: Sequence[str],
+) -> list[Mapping[str, Any]]:
     with _connect_read_only(database_path) as conn:
-        placeholders = ",".join("?" for _ in metrics)
-        return list(
-            conn.execute(
+        rows: list[Mapping[str, Any]] = []
+        placeholders = ",".join("?" for _ in identifiers)
+        rows.extend(
+            dict(row)
+            for row in conn.execute(
                 f"""
                 SELECT timestamp_utc, metric, value
                 FROM measurements
@@ -339,9 +894,67 @@ def _fetch_metric_rows(
                   AND metric IN ({placeholders})
                 ORDER BY timestamp_utc ASC, metric ASC, id ASC
                 """,
-                (to_utc_iso(start_utc), to_utc_iso(end_utc), *metrics),
+                (to_utc_iso(start_utc), to_utc_iso(end_utc), *identifiers),
             )
         )
+        if _has_table(conn, "public_observations") and _has_table(conn, "series_registry"):
+            rows.extend(
+                dict(row)
+                for row in conn.execute(
+                    f"""
+                    SELECT o.valid_start_utc AS timestamp_utc, o.series_id AS metric, o.value
+                    FROM public_observations o
+                    WHERE o.valid_start_utc >= ?
+                      AND o.valid_start_utc <= ?
+                      AND o.series_id IN ({placeholders})
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM public_observations newer
+                          WHERE newer.series_id = o.series_id
+                            AND newer.source_observation_key = o.source_observation_key
+                            AND (
+                                newer.ingested_at_utc > o.ingested_at_utc
+                                OR (
+                                    newer.ingested_at_utc = o.ingested_at_utc
+                                    AND newer.observation_id > o.observation_id
+                                )
+                            )
+                      )
+                    ORDER BY o.valid_start_utc ASC, o.series_id ASC, o.observation_id ASC
+                    """,
+                    (to_utc_iso(start_utc), to_utc_iso(end_utc), *identifiers),
+                )
+            )
+        return rows
+
+
+def _aligned_bin_count(
+    rows: Sequence[Mapping[str, Any]],
+    x_metric: str,
+    y_metric: str,
+    cadence_seconds: int,
+) -> int:
+    if cadence_seconds <= 0:
+        return 0
+    x_bins = _metric_bins(rows, x_metric, cadence_seconds)
+    y_bins = _metric_bins(rows, y_metric, cadence_seconds)
+    return len(x_bins & y_bins)
+
+
+def _metric_bins(
+    rows: Sequence[Mapping[str, Any]],
+    metric: str,
+    cadence_seconds: int,
+) -> set[int]:
+    bins: set[int] = set()
+    for row in rows:
+        if row["metric"] != metric or _optional_float(row["value"]) is None:
+            continue
+        timestamp = _optional_timestamp(row["timestamp_utc"])
+        if timestamp is None:
+            continue
+        bins.add(math.floor(timestamp.timestamp() / cadence_seconds))
+    return bins
 
 
 def _connect_read_only(database_path: Path) -> sqlite3.Connection:
@@ -355,7 +968,7 @@ def _connect_read_only(database_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def _series_from_rows(rows: Sequence[sqlite3.Row], metric: str) -> pd.Series:
+def _series_from_rows(rows: Sequence[Mapping[str, Any]], metric: str) -> pd.Series:
     timestamps: list[datetime] = []
     values: list[float] = []
     for row in rows:
@@ -372,6 +985,64 @@ def _series_from_rows(rows: Sequence[sqlite3.Row], metric: str) -> pd.Series:
     if not timestamps:
         return pd.Series(dtype=float, name=metric)
     return pd.Series(values, index=pd.DatetimeIndex(timestamps), name=metric, dtype=float)
+
+
+def _parse_metadata(value: Any) -> Mapping[str, Any]:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(str(value))
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, Mapping) else {}
+
+
+def _optional_timestamp(value: Any) -> datetime | None:
+    try:
+        return parse_utc(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric):
+        return None
+    return numeric
+
+
+def _infer_cadence_seconds(timestamps: Sequence[datetime]) -> int | None:
+    if len(timestamps) < 2:
+        return None
+    deltas = [
+        int((right - left).total_seconds())
+        for left, right in zip(timestamps, timestamps[1:])
+        if right > left
+    ]
+    if not deltas:
+        return None
+    return max(1, int(round(float(pd.Series(deltas).median()))))
+
+
+def _coverage(
+    timestamps: Sequence[datetime],
+    cadence_seconds: int,
+    interval_start: datetime,
+    interval_end: datetime,
+) -> float:
+    interval_seconds = max(0, int((interval_end - interval_start).total_seconds()))
+    expected_count = interval_seconds // cadence_seconds + 1
+    if expected_count <= 0:
+        return 0.0
+    bins = {
+        int((timestamp - interval_start).total_seconds()) // cadence_seconds
+        for timestamp in timestamps
+        if interval_start <= timestamp <= interval_end
+    }
+    return min(1.0, len(bins) / expected_count)
 
 
 def _preferred_transformed_pair(
@@ -553,6 +1224,12 @@ def _finding_from_evidence(
                 "method": options.multiple_testing_method,
                 "total_tests": total_tests,
             },
+            "scanner_series": {
+                "x_source_kind": evidence.pair.x_source_kind,
+                "y_source_kind": evidence.pair.y_source_kind,
+            },
+            "pair_compatibility": _json_safe(evidence.pair.compatibility),
+            "dry_run_only": evidence.pair.contains_public,
             "association_only": True,
         },
     )

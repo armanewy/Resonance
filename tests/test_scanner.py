@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import math
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 
-from resonance.analysis.scanner import ScannerOptions, _adjust_p_values, scan_correlations
+from resonance.analysis.scanner import ScannerOptions, _adjust_p_values, _select_scanner_candidate_pairs, scan_correlations
+from resonance.public_sources.eia_grid import SOURCE_ID, ensure_eia_registry
 from resonance.storage import (
     Measurement,
+    PublicObservation,
+    SeriesRecord,
     ensure_database,
     fetch_correlation_findings,
     insert_measurements,
+    insert_public_observations,
+    upsert_series_record,
 )
 from resonance.synthetic import generate_synthetic_series
 
@@ -80,6 +86,131 @@ def test_scan_multiple_testing_correction_blocks_borderline_scan(tmp_path) -> No
     )
 
     assert findings == ()
+
+
+def test_scan_dry_run_can_return_public_legacy_pair_without_writing(tmp_path) -> None:
+    db_path = tmp_path / "resonance.db"
+    _write_public_legacy_lag_db(db_path, hours=72)
+
+    findings = scan_correlations(
+        db_path,
+        hours=72,
+        dry_run=True,
+        now=NOW,
+        options=_public_scanner_options(),
+    )
+
+    conn = ensure_database(db_path)
+    try:
+        stored = fetch_correlation_findings(conn)
+    finally:
+        conn.close()
+
+    assert len(findings) == 1
+    assert {findings[0].x_metric, findings[0].y_metric} == {
+        "eia_grid_monitor:ISNE:system_load",
+        "weather_temperature_c",
+    }
+    assert findings[0].evidence["dry_run_only"] is True
+    assert findings[0].evidence["pair_compatibility"]["geography"] == "local_to_regional_context"
+    assert stored == []
+
+
+def test_scan_non_dry_run_keeps_public_series_out_of_persistence_path(tmp_path) -> None:
+    db_path = tmp_path / "resonance.db"
+    _write_public_legacy_lag_db(db_path, hours=72)
+
+    findings = scan_correlations(
+        db_path,
+        hours=72,
+        dry_run=False,
+        now=NOW,
+        options=_public_scanner_options(),
+    )
+
+    conn = ensure_database(db_path)
+    try:
+        stored = fetch_correlation_findings(conn)
+    finally:
+        conn.close()
+
+    assert findings == ()
+    assert stored == []
+
+
+def test_unified_scanner_rejects_incompatible_cadence_geography_and_lineage(tmp_path) -> None:
+    db_path = tmp_path / "resonance.db"
+    start = NOW - timedelta(hours=6)
+    conn = ensure_database(db_path)
+    try:
+        ensure_eia_registry(conn)
+        upsert_series_record(
+            conn,
+            SeriesRecord(
+                series_id="eia_grid_monitor:NYIS:system_load",
+                source_id=SOURCE_ID,
+                metric_name="system_load",
+                display_name="NYISO system load",
+                unit="MWh",
+                cadence_seconds=3600,
+                aggregation="hourly",
+                geography_type="balancing_authority",
+                geography_id="NYIS",
+                timezone="America/New_York",
+                timestamp_semantics="EIA hourly UTC period treated as valid hour starting at period",
+                parent_series_id=None,
+                lineage_id="eia_grid_monitor:NYIS:system_load",
+                quality_tier="official",
+            ),
+        )
+        insert_public_observations(
+            conn,
+            [
+                _public_observation("eia_grid_monitor:ISNE:system_load", start + timedelta(hours=hour), 100.0 + hour)
+                for hour in range(6)
+            ]
+            + [
+                _public_observation("eia_grid_monitor:NYIS:system_load", start + timedelta(hours=hour), 200.0 + hour)
+                for hour in range(6)
+            ]
+            + [
+                _public_observation("eia_grid_monitor:ISNE:generation_natural_gas", start + timedelta(hours=hour), 50.0 + hour)
+                for hour in range(6)
+            ]
+            + [
+                _public_observation("eia_grid_monitor:ISNE:generation_wind", start + timedelta(hours=hour), 10.0 + hour)
+                for hour in range(6)
+            ],
+        )
+        insert_measurements(
+            conn,
+            [
+                Measurement(start + timedelta(seconds=1000 * index), "odd_cadence_metric", float(index), "units", "synthetic")
+                for index in range(20)
+            ],
+        )
+    finally:
+        conn.close()
+
+    selection = _select_scanner_candidate_pairs(
+        db_path,
+        start,
+        NOW,
+        include_public=True,
+        options={
+            "min_observations": 4,
+            "min_coverage": 0.1,
+            "min_aligned_bins": 2,
+        },
+    )
+    reasons = {frozenset(rejection.metrics): rejection.reason for rejection in selection.rejections}
+
+    assert reasons[frozenset(("eia_grid_monitor:ISNE:system_load", "odd_cadence_metric"))] == "incompatible_cadence"
+    assert reasons[frozenset(("eia_grid_monitor:ISNE:system_load", "eia_grid_monitor:NYIS:system_load"))] == "incompatible_geography"
+    assert reasons[frozenset(("eia_grid_monitor:ISNE:generation_natural_gas", "eia_grid_monitor:ISNE:generation_wind"))] == "shared_lineage"
+    rejected_pairs = {frozenset(rejection.metrics) for rejection in selection.rejections}
+    selected_pairs = {frozenset((pair.x_metric, pair.y_metric)) for pair in selection.pairs}
+    assert not (rejected_pairs & selected_pairs)
 
 
 def test_scan_cli_is_silent_when_nothing_passes(tmp_path) -> None:
@@ -164,3 +295,68 @@ def _add_independent_metric(db_path, *, count: int) -> None:
         )
     finally:
         conn.close()
+
+
+def _write_public_legacy_lag_db(db_path, *, hours: int) -> None:
+    start = NOW - timedelta(hours=hours - 1)
+    public = []
+    weather = []
+    for index in range(hours):
+        timestamp = start + timedelta(hours=index)
+        signal = math.sin(index / 3.0) + 0.25 * math.cos(index / 5.0)
+        lagged = math.sin((index - 1) / 3.0) + 0.25 * math.cos((index - 1) / 5.0)
+        public.append(
+            _public_observation(
+                "eia_grid_monitor:ISNE:system_load",
+                timestamp,
+                signal,
+                revision=f"public-{index}",
+            )
+        )
+        weather.append(Measurement(timestamp, "weather_temperature_c", lagged, "C", "open-meteo"))
+
+    conn = ensure_database(db_path)
+    try:
+        ensure_eia_registry(conn)
+        insert_public_observations(conn, public)
+        insert_measurements(conn, weather)
+    finally:
+        conn.close()
+
+
+def _public_observation(
+    series_id: str,
+    timestamp: datetime,
+    value: float,
+    *,
+    revision: str | None = None,
+) -> PublicObservation:
+    return PublicObservation(
+        series_id=series_id,
+        valid_start_utc=timestamp,
+        valid_end_utc=timestamp + timedelta(hours=1),
+        observed_at_utc=timestamp + timedelta(hours=1),
+        ingested_at_utc=timestamp + timedelta(days=1),
+        value=value,
+        quality="reported",
+        source_revision=revision or f"{series_id}:{timestamp:%Y%m%dT%H}",
+        source_observation_key=f"{series_id}:{timestamp:%Y%m%dT%H}",
+    )
+
+
+def _public_scanner_options() -> ScannerOptions:
+    return ScannerOptions(
+        min_aligned_observations=24,
+        min_coverage=0.5,
+        discovery_fraction=0.7,
+        min_discovery_abs_rho=0.4,
+        max_corrected_q=1.0,
+        min_holdout_abs_rho=0.2,
+        min_sign_stability=0.5,
+        max_lag_seconds=7200,
+        min_overlap=8,
+        window_count=2,
+        permutations=19,
+        calendar_min_history=999,
+        multiple_testing_method="bh",
+    )
