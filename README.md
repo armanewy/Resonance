@@ -186,6 +186,23 @@ The CLI records proposal, fit, tuning, preregistration, blind evaluation, and
 report artifacts in the ledger. Blind evaluation remains one-shot per
 preregistration, and reports include the exact snapshot and code versions.
 
+### Optional Hypothesis Providers
+
+Science provider adapters are library-level helpers for proposing structured
+hypotheses from a `DiscoveryBrief`. They do not run fitting, tuning, selection,
+preregistration, blind evaluation, or CLI orchestration.
+
+`OpenAIProvider` uses the OpenAI Responses API with Structured Outputs. The
+`openai` package is optional and imported only when the provider is used; the
+API key is read from the OpenAI SDK's normal environment configuration. Requests
+send only prompt instructions and serialized `DiscoveryBrief` JSON, set
+`store=False`, do not configure tools, and record response metadata in the
+provider run request config.
+
+`CommandProvider` runs a configured local command argument vector, sends the
+serialized `DiscoveryBrief` JSON on stdin, reads hypothesis JSON from stdout,
+and enforces timeout and stdout-size limits. It never uses `shell=True`.
+
 ## Synthetic Scenarios
 
 Generate a deterministic synthetic time-series scenario:

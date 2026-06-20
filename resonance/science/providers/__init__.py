@@ -14,13 +14,17 @@ from resonance.science.providers.base import (
     validate_hypothesis_proposals,
     validate_max_hypotheses,
 )
+from resonance.science.providers.command_provider import CommandProvider
 from resonance.science.providers.mock import FileProvider, MockProvider
+from resonance.science.providers.openai_provider import OpenAIProvider
 
 __all__ = [
     "MAX_HYPOTHESES_PER_REQUEST",
+    "CommandProvider",
     "FileProvider",
     "HypothesisProvider",
     "MockProvider",
+    "OpenAIProvider",
     "ProviderError",
     "ProviderRun",
     "ProviderRunMetadata",
