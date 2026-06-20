@@ -11,6 +11,14 @@ from typing import Any, Mapping, Sequence
 
 from pydantic import ValidationError
 
+from resonance.science.ablation import (
+    DEFAULT_CANDIDATE_BUDGET as DEFAULT_ABLATION_CANDIDATE_BUDGET,
+    DEFAULT_DURATION_HOURS as DEFAULT_ABLATION_DURATION_HOURS,
+    DEFAULT_SCENARIOS as DEFAULT_ABLATION_SCENARIOS,
+    DEFAULT_SNAPSHOT_HOURS as DEFAULT_ABLATION_SNAPSHOT_HOURS,
+    AblationError,
+    run_ablation,
+)
 from resonance.science.blind_evaluator import (
     BlindEvaluationError,
     evaluate_preregistration,
@@ -58,6 +66,7 @@ CLI_VERSION = "manual-science-cli-v1"
 ARTIFACT_SCHEMA_VERSION = 1
 DEFAULT_SYNTHETIC_HOURS = 96.0
 DEFAULT_SYNTHETIC_MAX_LAG_SECONDS = 900
+DEFAULT_SYNTHETIC_NOISE = 0.6
 DEFAULT_SYNTHETIC_SAMPLE_INTERVAL_SECONDS = 300
 
 
@@ -72,6 +81,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = _dispatch(args)
     except (
         BlindEvaluationError,
+        AblationError,
         FileNotFoundError,
         FittingError,
         ImaginationError,
@@ -167,6 +177,28 @@ def _parser() -> argparse.ArgumentParser:
         help="fit approved imagination proposals on exploration and tune them",
     )
     fit_approved_parser.add_argument("run_id")
+
+    ablate = subparsers.add_parser(
+        "ablate",
+        help="compare mock LLM hypotheses against baseline generators on synthetic scenarios",
+    )
+    ablate.add_argument(
+        "--scenarios",
+        default=",".join(DEFAULT_ABLATION_SCENARIOS),
+        help="comma-separated synthetic scenarios to evaluate",
+    )
+    ablate.add_argument("--provider", default="mock", choices=("mock",))
+    ablate.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    ablate.add_argument("--candidate-budget", type=int, default=DEFAULT_ABLATION_CANDIDATE_BUDGET)
+    ablate.add_argument("--duration-hours", type=float, default=DEFAULT_ABLATION_DURATION_HOURS)
+    ablate.add_argument("--snapshot-hours", type=int, default=DEFAULT_ABLATION_SNAPSHOT_HOURS)
+    ablate.add_argument(
+        "--sample-interval-seconds",
+        type=int,
+        default=DEFAULT_SYNTHETIC_SAMPLE_INTERVAL_SECONDS,
+    )
+    ablate.add_argument("--noise", type=float, default=DEFAULT_SYNTHETIC_NOISE)
+    ablate.add_argument("--max-lag-seconds", type=int, default=DEFAULT_SYNTHETIC_MAX_LAG_SECONDS)
 
     preregister = subparsers.add_parser("preregister", help="freeze a tuned candidate before blind access")
     preregister.add_argument("--candidate", required=True, dest="candidate_id")
@@ -340,6 +372,20 @@ def _dispatch(args: argparse.Namespace) -> dict[str, Any] | None:
             args.run_id,
             artifact_root=artifact_root,
             ledger_path=ledger_path,
+        )
+    if args.command == "ablate":
+        return run_ablation(
+            scenarios=parse_metric_csv(args.scenarios),
+            provider_name=args.provider,
+            seed=args.seed,
+            candidate_budget=args.candidate_budget,
+            artifact_root=artifact_root,
+            ledger_path=ledger_path,
+            duration_hours=args.duration_hours,
+            snapshot_hours=args.snapshot_hours,
+            sample_interval_seconds=args.sample_interval_seconds,
+            max_lag_seconds=args.max_lag_seconds,
+            noise=args.noise,
         )
     if args.command == "preregister":
         return _preregister_candidate(args.candidate_id, artifact_root, ledger_path)
