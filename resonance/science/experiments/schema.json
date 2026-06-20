@@ -1,0 +1,279 @@
+{
+  "$defs": {
+    "AnalysisMethod": {
+      "enum": [
+        "mean_difference",
+        "paired_block_difference",
+        "nonparametric_sign_test"
+      ],
+      "title": "AnalysisMethod",
+      "type": "string"
+    },
+    "ConditionName": {
+      "enum": [
+        "intervention",
+        "control"
+      ],
+      "title": "ConditionName",
+      "type": "string"
+    },
+    "ExperimentRule": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "description"
+      ],
+      "title": "ExperimentRule",
+      "type": "object"
+    },
+    "ManualCondition": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "instructions": {
+          "minLength": 1,
+          "title": "Instructions",
+          "type": "string"
+        },
+        "execution_mode": {
+          "const": "human_executed",
+          "default": "human_executed",
+          "title": "Execution Mode",
+          "type": "string"
+        },
+        "is_medical_intervention": {
+          "const": false,
+          "default": false,
+          "title": "Is Medical Intervention",
+          "type": "boolean"
+        },
+        "involves_hazardous_physical_action": {
+          "const": false,
+          "default": false,
+          "title": "Involves Hazardous Physical Action",
+          "type": "boolean"
+        },
+        "changes_router_or_os_settings_automatically": {
+          "const": false,
+          "default": false,
+          "title": "Changes Router Or Os Settings Automatically",
+          "type": "boolean"
+        },
+        "prevents_emergency_communication": {
+          "const": false,
+          "default": false,
+          "title": "Prevents Emergency Communication",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "instructions"
+      ],
+      "title": "ManualCondition",
+      "type": "object"
+    },
+    "ScheduledBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "block_index": {
+          "minimum": 0,
+          "title": "Block Index",
+          "type": "integer"
+        },
+        "condition": {
+          "$ref": "#/$defs/ConditionName"
+        },
+        "planned_start": {
+          "format": "date-time",
+          "title": "Planned Start",
+          "type": "string"
+        },
+        "planned_end": {
+          "format": "date-time",
+          "title": "Planned End",
+          "type": "string"
+        },
+        "requires_user_confirmation": {
+          "const": true,
+          "default": true,
+          "title": "Requires User Confirmation",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "block_index",
+        "condition",
+        "planned_start",
+        "planned_end"
+      ],
+      "title": "ScheduledBlock",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "title": {
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "hypothesis_id": {
+      "minLength": 1,
+      "title": "Hypothesis Id",
+      "type": "string"
+    },
+    "intervention_condition": {
+      "$ref": "#/$defs/ManualCondition"
+    },
+    "control_condition": {
+      "$ref": "#/$defs/ManualCondition"
+    },
+    "primary_outcome_metric": {
+      "minLength": 1,
+      "title": "Primary Outcome Metric",
+      "type": "string"
+    },
+    "secondary_outcome_metrics": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Secondary Outcome Metrics",
+      "type": "array"
+    },
+    "block_duration_seconds": {
+      "minimum": 60,
+      "title": "Block Duration Seconds",
+      "type": "integer"
+    },
+    "number_of_blocks": {
+      "minimum": 2,
+      "title": "Number Of Blocks",
+      "type": "integer"
+    },
+    "washout_duration_seconds": {
+      "minimum": 60,
+      "title": "Washout Duration Seconds",
+      "type": "integer"
+    },
+    "randomization_seed": {
+      "title": "Randomization Seed",
+      "type": "integer"
+    },
+    "randomized_schedule": {
+      "items": {
+        "$ref": "#/$defs/ScheduledBlock"
+      },
+      "title": "Randomized Schedule",
+      "type": "array"
+    },
+    "planned_start": {
+      "format": "date-time",
+      "title": "Planned Start",
+      "type": "string"
+    },
+    "inclusion_rules": {
+      "items": {
+        "$ref": "#/$defs/ExperimentRule"
+      },
+      "title": "Inclusion Rules",
+      "type": "array"
+    },
+    "exclusion_rules": {
+      "items": {
+        "$ref": "#/$defs/ExperimentRule"
+      },
+      "title": "Exclusion Rules",
+      "type": "array"
+    },
+    "stopping_rules": {
+      "items": {
+        "$ref": "#/$defs/ExperimentRule"
+      },
+      "minItems": 1,
+      "title": "Stopping Rules",
+      "type": "array"
+    },
+    "abort_conditions": {
+      "items": {
+        "$ref": "#/$defs/ExperimentRule"
+      },
+      "minItems": 1,
+      "title": "Abort Conditions",
+      "type": "array"
+    },
+    "minimum_effect": {
+      "exclusiveMinimum": 0.0,
+      "title": "Minimum Effect",
+      "type": "number"
+    },
+    "analysis_method": {
+      "$ref": "#/$defs/AnalysisMethod"
+    },
+    "safety_notes": {
+      "minLength": 1,
+      "title": "Safety Notes",
+      "type": "string"
+    },
+    "requires_manual_confirmation": {
+      "const": true,
+      "default": true,
+      "title": "Requires Manual Confirmation",
+      "type": "boolean"
+    },
+    "prohibited_automatic_actions": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Prohibited Automatic Actions",
+      "type": "array"
+    },
+    "maximum_experiment_duration_seconds": {
+      "default": 604800,
+      "exclusiveMinimum": 0,
+      "maximum": 2592000,
+      "title": "Maximum Experiment Duration Seconds",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "title",
+    "hypothesis_id",
+    "intervention_condition",
+    "control_condition",
+    "primary_outcome_metric",
+    "block_duration_seconds",
+    "number_of_blocks",
+    "washout_duration_seconds",
+    "randomization_seed",
+    "randomized_schedule",
+    "planned_start",
+    "stopping_rules",
+    "abort_conditions",
+    "minimum_effect",
+    "analysis_method",
+    "safety_notes",
+    "prohibited_automatic_actions"
+  ],
+  "title": "ExperimentSpec",
+  "type": "object"
+}
