@@ -14,6 +14,21 @@ from resonance.science.experiments.contracts import (
     ScheduledBlock,
     generate_randomized_schedule,
 )
+from resonance.science.experiments.evaluator import (
+    EXPERIMENT_EVALUATOR_VERSION,
+    ExperimentEvaluationError,
+    evaluate_experiment,
+)
+from resonance.science.experiments.runner import (
+    EXPERIMENT_RUNNER_VERSION,
+    ExperimentRunnerError,
+    begin_block,
+    confirm_condition,
+    end_block,
+    experiment_status,
+    preregister_experiment,
+    start_experiment,
+)
 
 __all__ = [
     "DEFAULT_MAX_EXPERIMENT_DURATION_SECONDS",
@@ -27,5 +42,16 @@ __all__ = [
     "ExperimentSpec",
     "ManualCondition",
     "ScheduledBlock",
+    "EXPERIMENT_EVALUATOR_VERSION",
+    "EXPERIMENT_RUNNER_VERSION",
+    "ExperimentEvaluationError",
+    "ExperimentRunnerError",
+    "begin_block",
+    "confirm_condition",
+    "end_block",
+    "evaluate_experiment",
+    "experiment_status",
     "generate_randomized_schedule",
+    "preregister_experiment",
+    "start_experiment",
 ]
