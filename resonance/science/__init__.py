@@ -23,9 +23,21 @@ from resonance.science.contracts import (
     metric_catalog_names,
     stable_hash,
 )
+from resonance.science.review import (
+    DeterministicReview,
+    DeterministicReviewError,
+    ReviewIssue,
+    ReviewRecommendation,
+    ReviewSpec,
+    assert_hypothesis_valid,
+    validate_hypotheses,
+    validate_hypothesis,
+)
 
 __all__ = [
     "ComplexityBudget",
+    "DeterministicReview",
+    "DeterministicReviewError",
     "Direction",
     "Expression",
     "FalsificationCondition",
@@ -36,8 +48,12 @@ __all__ = [
     "NearZeroBehavior",
     "Origin",
     "ParameterBounds",
+    "ReviewIssue",
+    "ReviewRecommendation",
+    "ReviewSpec",
     "SCHEMA_VERSION",
     "TargetTransform",
+    "assert_hypothesis_valid",
     "canonical_json",
     "expression_lag_seconds",
     "expression_metrics",
@@ -46,4 +62,6 @@ __all__ = [
     "metric_catalog_id",
     "metric_catalog_names",
     "stable_hash",
+    "validate_hypotheses",
+    "validate_hypothesis",
 ]
