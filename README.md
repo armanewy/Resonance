@@ -167,6 +167,25 @@ Show recent entries:
 python -m resonance.science.ledger_cli show --limit 20
 ```
 
+## Manual Scientific Loop
+
+Run the human-operated sealed loop without any LLM dependency:
+
+```powershell
+python -m resonance.science.cli snapshot synthetic --scenario strong_lag
+python -m resonance.science.cli hypothesis validate examples\science\strong_lag_hypothesis.json --snapshot SNAPSHOT_ID
+python -m resonance.science.cli fit examples\science\strong_lag_hypothesis.json --snapshot SNAPSHOT_ID
+python -m resonance.science.cli tune --run RUN_ID
+python -m resonance.science.cli preregister --candidate CANDIDATE_ID
+python -m resonance.science.cli blind-evaluate PREREGISTRATION_ID
+python -m resonance.science.cli report PREREGISTRATION_ID
+python -m resonance.science.ledger_cli verify
+```
+
+The CLI records proposal, fit, tuning, preregistration, blind evaluation, and
+report artifacts in the ledger. Blind evaluation remains one-shot per
+preregistration, and reports include the exact snapshot and code versions.
+
 ## Synthetic Scenarios
 
 Generate a deterministic synthetic time-series scenario:
