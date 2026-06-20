@@ -32,6 +32,7 @@ SUPPORTED_EVENT_TYPES = frozenset(
         "snapshot_created",
         "hypothesis_proposed",
         "fit_completed",
+        "program_search_completed",
         "hypothesis_preregistered",
         "blind_evaluation_completed",
         "result_interpreted",
