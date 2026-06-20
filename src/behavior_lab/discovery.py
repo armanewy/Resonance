@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from statistics import mean
-from typing import Any
+from typing import Any, Callable
 
 from behavior_lab.core import HypothesisSpec, new_id
+from behavior_lab.dsl import Formula
 from behavior_lab.evaluation import evaluate_model, residuals
 from behavior_lab.experiments import DisagreementFinder, ExperimentScheduler
 from behavior_lab.gym import TARGET, WorldGym
@@ -103,6 +104,52 @@ class HypothesisGenerator:
         if {"explicit_first_step", "ambiguity"}.issubset(set(numeric_names)):
             terms.insert(0, "explicit_first_step * indicator(ambiguity > 0.6)")
         return terms
+
+
+class LLMHypothesisGenerator:
+    """Validated adapter seam for an external hypothesis-proposal model."""
+
+    def __init__(self, proposer: Callable[[dict[str, Any]], list[dict[str, Any]]]):
+        self.proposer = proposer
+
+    def propose(self, api: Any, *, max_hypotheses: int = 5) -> list[HypothesisSpec]:
+        variables = set(api.list_variables())
+        request = {
+            "schema": api.inspect_schema(),
+            "target": api.describe_target(),
+            "variables": sorted(variables),
+            "rules": [
+                "Return small executable formulas only.",
+                "Use only listed variables.",
+                "Include assumptions and falsification conditions.",
+                "Do not claim causality from observational association.",
+            ],
+            "max_hypotheses": max_hypotheses,
+        }
+        specs: list[HypothesisSpec] = []
+        for index, candidate in enumerate(self.proposer(request), start=1):
+            terms = [str(term) for term in candidate.get("terms", [])]
+            if not terms:
+                continue
+            formula = Formula.parse(terms)
+            used_variables = set(formula.variables)
+            unknown = used_variables - variables
+            if unknown:
+                raise ValueError(f"LLM hypothesis used unknown variables: {sorted(unknown)}")
+            specs.append(
+                HypothesisSpec.formula(
+                    hypothesis_id=str(candidate.get("hypothesis_id") or new_id("h_llm")),
+                    target_name=api.gym.target_name,
+                    terms=terms,
+                    assumptions=[str(item) for item in candidate.get("assumptions", [])]
+                    or ["LLM-proposed formula passed DSL and variable validation"],
+                    falsification_conditions=[str(item) for item in candidate.get("falsification_conditions", [])]
+                    or ["Does not beat base-rate and recent-rate baselines on development feedback"],
+                )
+            )
+            if len(specs) >= max_hypotheses:
+                break
+        return specs
 
 
 class DiscoveryLoop:

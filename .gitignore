@@ -12,4 +12,7 @@ build/
 *.egg-info/
 .behavior_lab/
 .demo/
+.stress_lab/
 data/
+runs/
+reports-*.json

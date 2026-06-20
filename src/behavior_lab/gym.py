@@ -4,7 +4,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from behavior_lab.core import HypothesisSpec
+from behavior_lab.core import HypothesisSpec, utc_now
 from behavior_lab.evaluation import evaluate_model, pareto_frontier
 from behavior_lab.ledger import ImmutableLedger
 from behavior_lab.models import LogisticFormulaHypothesis, ModelFoundry
@@ -16,10 +16,15 @@ TARGET = "started_within_10_minutes"
 
 
 class BlindEvaluationServer:
-    def __init__(self, splits: dict[str, list[dict[str, Any]]], target_name: str = TARGET):
+    def __init__(
+        self,
+        splits: dict[str, list[dict[str, Any]]],
+        target_name: str = TARGET,
+        frozen_candidates: set[str] | None = None,
+    ):
         self.splits = splits
         self.target_name = target_name
-        self._frozen_candidates: set[str] = set()
+        self._frozen_candidates: set[str] = set(frozen_candidates or set())
 
     def query_training_data(self, limit: int | None = None) -> list[dict[str, Any]]:
         rows = self.splits.get("training", [])
@@ -85,13 +90,75 @@ class WorldGym:
     def rows(self) -> list[dict[str, Any]]:
         rows = supervised_rows(self.decision_episodes(), self.target_name)
         rows.extend(self.intervention_trial_rows())
+        rows.sort(key=lambda item: item["decision_time"])
         return rows
 
     def splits(self) -> dict[str, list[dict[str, Any]]]:
-        return split_rows(self.rows())
+        rows = self.rows()
+        assignments = self.ensure_split_manifest(rows)
+        grouped: dict[str, list[dict[str, Any]]] = {"training": [], "development": [], "hidden": [], "prospective": []}
+        for row in rows:
+            split = assignments.get(row["case_id"])
+            if split:
+                grouped.setdefault(split, []).append(row)
+        return grouped
+
+    def split_assignments(self) -> dict[str, str]:
+        assignments: dict[str, str] = {}
+        for payload in self.ledger.payloads("split_assignment"):
+            case_id = payload.get("case_id") or payload.get("episode_id")
+            if case_id and payload.get("split"):
+                assignments[str(case_id)] = str(payload["split"])
+        return assignments
+
+    def ensure_split_manifest(self, rows: list[dict[str, Any]] | None = None) -> dict[str, str]:
+        """Create append-only split assignments without migrating existing cases.
+
+        Initial datasets use the old temporal fractions once. New rows are assigned
+        to training until a model has been frozen, after which new rows become
+        prospective by definition.
+        """
+
+        rows = rows if rows is not None else self.rows()
+        assignments = self.split_assignments()
+        missing = [row for row in rows if row["case_id"] not in assignments]
+        if not missing:
+            return assignments
+
+        if not assignments:
+            initial = split_rows(rows)
+            for split, split_rows_ in initial.items():
+                for row in split_rows_:
+                    self._record_split_assignment(row["case_id"], split, "temporal_fraction_manifest_v1")
+                    assignments[row["case_id"]] = split
+            return assignments
+
+        has_frozen_candidate = bool(self.ledger.payloads("frozen_candidate"))
+        split = "prospective" if has_frozen_candidate else "training"
+        policy = "post_freeze_prospective_v1" if has_frozen_candidate else "pre_freeze_append_training_v1"
+        for row in missing:
+            self._record_split_assignment(row["case_id"], split, policy)
+            assignments[row["case_id"]] = split
+        return assignments
+
+    def _record_split_assignment(self, case_id: str, split: str, policy_version: str) -> None:
+        self.ledger.append(
+            "split_assignment",
+            {
+                "episode_id": case_id,
+                "case_id": case_id,
+                "split": split,
+                "assigned_at": utc_now(),
+                "split_policy_version": policy_version,
+            },
+            record_id=f"split_{case_id}",
+        )
 
     def blind_server(self) -> BlindEvaluationServer:
-        return BlindEvaluationServer(self.splits(), self.target_name)
+        return BlindEvaluationServer(self.splits(), self.target_name, self.frozen_model_ids())
+
+    def frozen_model_ids(self) -> set[str]:
+        return {payload["model_id"] for payload in self.ledger.payloads("frozen_candidate") if "model_id" in payload}
 
     def fit_hypothesis(self, spec: HypothesisSpec) -> Any:
         return LogisticFormulaHypothesis(spec).fit(self.splits()["training"])

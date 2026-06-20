@@ -5,11 +5,14 @@ from typing import Any
 
 from behavior_lab.core import HypothesisSpec
 from behavior_lab.evaluation import counterexamples, paired_compare, residuals
-from behavior_lab.experiments import DisagreementFinder, ExperimentProposal
+from behavior_lab.experiments import DisagreementFinder, ExperimentProposal, ExperimentScheduler
 from behavior_lab.gym import TARGET, WorldGym
-from behavior_lab.models import LogisticFormulaHypothesis, ModelFoundry
-from behavior_lab.registry import ModelRegistry
+from behavior_lab.models import LogisticFormulaHypothesis, ModelFoundry, model_from_artifact, model_to_artifact
+from behavior_lab.registry import EvaluationBudgetError, ModelRegistry
 from behavior_lab.temporal import feature_catalog
+
+
+EvaluationBudgetExceeded = EvaluationBudgetError
 
 
 class ResearchAPI:
@@ -19,11 +22,15 @@ class ResearchAPI:
     failures are limited summaries, and hidden/prospective labels are never exposed.
     """
 
-    def __init__(self, gym: WorldGym):
+    def __init__(self, gym: WorldGym, *, campaign_id: str = "default", hidden_budget: int = 1, prospective_budget: int = 1):
         self.gym = gym
         self.registry = ModelRegistry(gym.ledger)
         self.models: dict[str, Any] = {}
         self.hypotheses: dict[str, HypothesisSpec] = {}
+        self.campaign_id = campaign_id
+        self.hidden_budget = hidden_budget
+        self.prospective_budget = prospective_budget
+        self._load_registry_state()
 
     def inspect_schema(self) -> dict[str, Any]:
         return {
@@ -33,7 +40,12 @@ class ResearchAPI:
                 "hypothesis",
                 "model_fit",
                 "evaluation",
+                "evaluation_budget_use",
                 "experiment_preregistration",
+                "intervention_assignment",
+                "split_assignment",
+                "research_run_start",
+                "research_run_end",
                 "frozen_candidate",
                 "model_obituary",
             ],
@@ -81,16 +93,29 @@ class ResearchAPI:
                 raise KeyError(f"Unknown hypothesis: {hypothesis_id}")
             spec = HypothesisSpec(**payload)
             self.hypotheses[hypothesis_id] = spec
-        model = LogisticFormulaHypothesis(spec).fit(self.gym.splits()["training"])
+        training_rows = self.gym.splits()["training"]
+        model = LogisticFormulaHypothesis(spec).fit(training_rows)
         self.models[model.model_id] = model
-        self.registry.record_fit(model, spec.hypothesis_id, "training", len(self.gym.splits()["training"]))
+        artifact = model_to_artifact(model, training_rows)
+        self.registry.record_fit(model, spec.hypothesis_id, "training", len(training_rows), artifact=artifact)
         return {"model_id": model.model_id, "hypothesis_id": hypothesis_id, "parameters": model.parameters}
 
     def evaluate_hypothesis(self, model_id: str, split: str = "development") -> dict[str, Any]:
         model = self._model(model_id)
+        if split == "prospective":
+            raise PermissionError("Use submit_frozen_candidate for prospective evaluation.")
+        if split == "hidden":
+            self.registry.assert_evaluation_budget_available(campaign_id=self.campaign_id, split=split, limit=self.hidden_budget)
         result = self.gym.blind_server().evaluate(model, split=split)
         if split in {"development", "hidden", "prospective"}:
             self.registry.record_evaluation_from_payload(result)
+        if split == "hidden":
+            self.registry.record_evaluation_budget_use(
+                campaign_id=self.campaign_id,
+                model_id=model_id,
+                split=split,
+                limit=self.hidden_budget,
+            )
         return result
 
     def compare_models(self, model_a: str, model_b: str, split: str = "development") -> dict[str, Any]:
@@ -127,10 +152,72 @@ class ResearchAPI:
             simulated.append(asdict(trial))
         return simulated
 
+    def run_offline_experiment(self, proposal: ExperimentProposal, trials: int = 12) -> dict[str, Any]:
+        scheduler = ExperimentScheduler(self.gym.ledger)
+        preregistration_id = scheduler.preregister(
+            question="Synthetic experiment proposed through ResearchAPI.",
+            treatment=proposal.treatment,
+            comparator=proposal.comparator,
+            target=self.gym.target_name,
+            population="synthetic world gym contexts",
+            planned_trials=trials,
+            stopping_rule=f"Stop after exactly {trials} synthetic assignments.",
+            analysis_plan="Estimate randomized difference in means and append all trials to the immutable ledger.",
+            approval_required=False,
+        )
+        for _ in range(trials):
+            assignment = scheduler.assign_intervention(
+                proposal.context,
+                treatment=proposal.treatment,
+                comparator=proposal.comparator,
+                probability=0.5,
+                preregistration_id=preregistration_id,
+            )
+            assigned = assignment["assignment"]["assigned_treatment"]
+            synthetic_trial = self.gym.world.run_intervention_trial(
+                proposal.context,
+                proposal.treatment,
+                proposal.comparator,
+                assigned,
+                0.5,
+                preregistration_id=preregistration_id,
+            )
+            scheduler.record_trial_outcome(
+                assignment,
+                synthetic_trial.outcomes,
+                adherence=synthetic_trial.adherence,
+                measurement_horizons=synthetic_trial.measurement_horizons,
+                subject_id=synthetic_trial.subject_id,
+            )
+        self.gym.ledger.verify_hash_chain()
+        effect = scheduler.estimate_treatment_effect(
+            treatment=proposal.treatment,
+            comparator=proposal.comparator,
+            outcome_name=self.gym.target_name,
+        )
+        return {
+            "preregistration_id": preregistration_id,
+            "trials_appended": trials,
+            "ledger_valid": True,
+            "effect_estimate": effect,
+        }
+
     def submit_frozen_candidate(self, model_id: str) -> dict[str, Any]:
         model = self._model(model_id)
+        self.registry.assert_evaluation_budget_available(
+            campaign_id=self.campaign_id,
+            split="prospective",
+            limit=self.prospective_budget,
+        )
+        self.registry.freeze_candidate(model_id, "prospective", "submitted through ResearchAPI", campaign_id=self.campaign_id)
         result = self.gym.blind_server().submit_frozen_candidate(model)
-        self.registry.freeze_candidate(model_id, "prospective", "submitted through ResearchAPI")
+        self.registry.record_evaluation_from_payload(result)
+        self.registry.record_evaluation_budget_use(
+            campaign_id=self.campaign_id,
+            model_id=model_id,
+            split="prospective",
+            limit=self.prospective_budget,
+        )
         return result
 
     def fit_model_zoo(self) -> list[Any]:
@@ -138,6 +225,13 @@ class ResearchAPI:
         models = ModelFoundry().fit_zoo(splits["training"], splits["development"], self.gym.target_name)
         for model in models:
             self.models[model.model_id] = model
+            self.registry.record_fit(
+                model,
+                getattr(model, "hypothesis_id", model.model_id),
+                "training",
+                len(splits["training"]),
+                artifact=model_to_artifact(model, splits["training"]),
+            )
         return models
 
     def mechanism_score(self, hypothesis_id: str) -> dict[str, Any]:
@@ -151,5 +245,23 @@ class ResearchAPI:
 
     def _model(self, model_id: str) -> Any:
         if model_id not in self.models:
-            raise KeyError(f"Model {model_id!r} is not fitted in this ResearchAPI session")
+            self._load_registry_state()
+        if model_id not in self.models:
+            raise KeyError(f"Model {model_id!r} is not fitted in this ResearchAPI session or persisted registry")
         return self.models[model_id]
+
+    def _load_registry_state(self) -> None:
+        for payload in self.gym.ledger.payloads("hypothesis"):
+            try:
+                self.hypotheses[payload["hypothesis_id"]] = HypothesisSpec(**payload)
+            except TypeError:
+                continue
+        for payload in self.gym.ledger.payloads("model_fit"):
+            artifact = payload.get("artifact", {})
+            if not artifact or artifact.get("family") == "unknown":
+                continue
+            try:
+                model = model_from_artifact(artifact)
+            except (KeyError, TypeError, ValueError):
+                continue
+            self.models[model.model_id] = model

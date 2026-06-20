@@ -11,6 +11,7 @@ from behavior_lab.experiments import ExperimentScheduler
 from behavior_lab.gym import TARGET, WorldGym
 from behavior_lab.ledger import ImmutableLedger
 from behavior_lab.models import ModelFoundry
+from behavior_lab.runner import BatchConfig, SyntheticBatchRunner
 from behavior_lab.evaluation import evaluate_model, paired_compare, pareto_frontier
 from behavior_lab.worlds import make_world
 from behavior_lab.stress import LabStressTester
@@ -127,7 +128,16 @@ def command_stress_test(args: argparse.Namespace) -> None:
     if args.matrix:
         _print_json(tester.run_world_matrix(data_dir, episodes=args.episodes, seed=args.seed))
     else:
-        _print_json(tester.run(data_dir, episodes=args.episodes, seed=args.seed))
+        _print_json(tester.run(data_dir, episodes=args.episodes, seed=args.seed, world=args.world))
+
+
+def command_batch_stress(args: argparse.Namespace) -> None:
+    config = BatchConfig(
+        worlds=_parse_csv_strings(args.worlds),
+        seeds=_parse_csv_ints(args.seeds),
+        episode_counts=_parse_csv_ints(args.episode_counts),
+    )
+    _print_json(SyntheticBatchRunner(args.data_dir).run(config))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -156,10 +166,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     stress = subparsers.add_parser("stress-test", help="Run self-audits for leakage, hidden-label redaction, baselines, and mechanism recovery")
     stress.add_argument("--data-dir", default=".stress_lab")
+    stress.add_argument("--world", default="habit")
     stress.add_argument("--episodes", type=int, default=160)
     stress.add_argument("--seed", type=int, default=17)
     stress.add_argument("--matrix", action="store_true", help="Run the audit across all synthetic hidden worlds")
     stress.set_defaults(func=command_stress_test)
+
+    batch = subparsers.add_parser("batch-stress", help="Run locked/idempotent synthetic stress batches")
+    batch.add_argument("--data-dir", default="runs/batch")
+    batch.add_argument("--worlds", default="habit,two_mode,threshold,nonstationary,confounded")
+    batch.add_argument("--seeds", default="11,23,47,89,131")
+    batch.add_argument("--episode-counts", default="100,300,1000")
+    batch.set_defaults(func=command_batch_stress)
 
     demo = subparsers.add_parser("demo", help="Run all four waves end-to-end")
     demo.add_argument("--data-dir", default=".demo")
@@ -177,6 +195,14 @@ def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
     args.func(args)
+
+
+def _parse_csv_strings(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _parse_csv_ints(value: str) -> list[int]:
+    return [int(item.strip()) for item in value.split(",") if item.strip()]
 
 
 if __name__ == "__main__":

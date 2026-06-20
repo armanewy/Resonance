@@ -7,6 +7,7 @@ from pathlib import Path
 from behavior_lab.causal import TreatmentComparator
 from behavior_lab.experiments import ExperimentScheduler
 from behavior_lab.gym import WorldGym
+from behavior_lab.runner import BatchConfig, SyntheticBatchRunner
 from behavior_lab.stress import LabStressTester
 from behavior_lab.worlds import HabitPlusOverrideWorld
 
@@ -62,7 +63,18 @@ class CausalAndStressTests(unittest.TestCase):
             report = LabStressTester().run(Path(tmp), episodes=80, seed=4)
             self.assertTrue(report["temporal_firewall_ok"])
             self.assertTrue(report["hidden_payload_redacted"])
-            self.assertGreaterEqual(report["formula_driver_recall"], 0.5)
+            self.assertIn("best_formula_mechanism_recall", report)
+            self.assertIn("formula_language_driver_recall_probe", report)
+            self.assertGreaterEqual(report["formula_language_driver_recall_probe"], 0.5)
+
+    def test_batch_runner_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = BatchConfig(worlds=["habit"], seeds=[9], episode_counts=[40])
+            runner = SyntheticBatchRunner(Path(tmp))
+            first = runner.run(config)
+            second = runner.run(config)
+            self.assertEqual(first[0]["status"], "complete")
+            self.assertEqual(second[0]["status"], "skipped")
 
 
 if __name__ == "__main__":

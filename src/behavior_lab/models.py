@@ -5,10 +5,13 @@ import math
 from statistics import mean
 from typing import Any
 
-from behavior_lab.core import HypothesisSpec, new_id
+from behavior_lab.core import HypothesisSpec, new_id, stable_hash, to_jsonable
 from behavior_lab.dsl import Formula
 from behavior_lab.evaluation import evaluate_model
 from behavior_lab.temporal import feature_catalog
+
+MODEL_ARTIFACT_VERSION = 1
+SOFTWARE_VERSION = "0.1.0"
 
 
 def sigmoid(value: float) -> float:
@@ -297,3 +300,116 @@ class ModelFoundry:
         models.append(LogisticFormulaHypothesis(spec).fit(training_rows))
         models.append(SymbolicSearch(max_terms=5, candidate_limit=14).search(training_rows, development_rows, target_name))
         return models
+
+
+def training_snapshot_hash(rows: list[dict[str, Any]]) -> str:
+    snapshot = [
+        {
+            "case_id": row.get("case_id"),
+            "features": row.get("features", {}),
+            "target": row.get("target"),
+        }
+        for row in rows
+    ]
+    return stable_hash(snapshot)
+
+
+def model_to_artifact(model: Any, training_rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    feature_schema = numeric_features(training_rows or [])
+    common = {
+        "artifact_version": MODEL_ARTIFACT_VERSION,
+        "software_version": SOFTWARE_VERSION,
+        "class": type(model).__name__,
+        "model_id": model.model_id,
+        "complexity": getattr(model, "complexity", None),
+        "feature_schema": feature_schema,
+        "training_snapshot_hash": training_snapshot_hash(training_rows or []),
+    }
+    if isinstance(model, BaseRateModel):
+        common.update({"family": "base_rate", "rate": model.rate})
+    elif isinstance(model, RecentActionBaseline):
+        common.update({"family": "recent_rate", "recent_rate": model.recent_rate})
+    elif isinstance(model, NearestNeighborModel):
+        common.update({"family": "nearest_neighbor", "rows": to_jsonable(model.rows), "features": list(model.features)})
+    elif isinstance(model, FittedLogisticFormula):
+        common.update(
+            {
+                "family": "logistic_formula",
+                "hypothesis_id": model.hypothesis_id,
+                "formula_terms": [term.expression for term in model.formula.terms],
+                "weights": list(model.weights),
+                "parameters": model.parameters,
+            }
+        )
+    elif isinstance(model, ThresholdRuleModel):
+        common.update(
+            {
+                "family": "threshold_rule",
+                "variable": model.variable,
+                "threshold": model.threshold,
+                "low_rate": model.low_rate,
+                "high_rate": model.high_rate,
+            }
+        )
+    elif isinstance(model, DecisionStumpModel):
+        common.update(
+            {
+                "family": "decision_stump",
+                "variable": model.variable,
+                "threshold": model.threshold,
+                "left_rate": model.left_rate,
+                "right_rate": model.right_rate,
+            }
+        )
+    elif isinstance(model, TwoStateModeModel):
+        common.update(
+            {
+                "family": "two_state_mode",
+                "depleted_rate": model.depleted_rate,
+                "exploratory_rate": model.exploratory_rate,
+            }
+        )
+    else:
+        common.update({"family": "unknown"})
+    return common
+
+
+def model_from_artifact(artifact: dict[str, Any]) -> Any:
+    family = artifact.get("family")
+    model_id = str(artifact["model_id"])
+    if family == "base_rate":
+        return BaseRateModel(model_id, float(artifact["rate"]))
+    if family == "recent_rate":
+        return RecentActionBaseline(model_id, float(artifact["recent_rate"]))
+    if family == "nearest_neighbor":
+        return NearestNeighborModel(model_id, list(artifact.get("rows", [])), list(artifact.get("features", [])))
+    if family == "logistic_formula":
+        terms = list(artifact.get("formula_terms", []))
+        weights = [float(value) for value in artifact.get("weights", [])]
+        formula = Formula.parse(terms)
+        return FittedLogisticFormula(
+            model_id=model_id,
+            hypothesis_id=str(artifact["hypothesis_id"]),
+            formula=formula,
+            weights=weights,
+            complexity=int(artifact.get("complexity", formula.complexity)),
+        )
+    if family == "threshold_rule":
+        return ThresholdRuleModel(
+            model_id,
+            str(artifact["variable"]),
+            float(artifact["threshold"]),
+            float(artifact["low_rate"]),
+            float(artifact["high_rate"]),
+        )
+    if family == "decision_stump":
+        return DecisionStumpModel(
+            model_id,
+            str(artifact["variable"]),
+            float(artifact["threshold"]),
+            float(artifact["left_rate"]),
+            float(artifact["right_rate"]),
+        )
+    if family == "two_state_mode":
+        return TwoStateModeModel(model_id, float(artifact["depleted_rate"]), float(artifact["exploratory_rate"]))
+    raise ValueError(f"Cannot reconstruct model artifact family {family!r}")

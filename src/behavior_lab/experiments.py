@@ -101,6 +101,10 @@ class ExperimentScheduler:
         measurement_horizons: list[str] | None = None,
         subject_id: str = "arman",
     ) -> InterventionTrial:
+        intervened_context = _apply_intervention(
+            assignment["context_snapshot"],
+            assignment["assignment"]["assigned_treatment"],
+        )
         trial = InterventionTrial.create(
             subject_id=subject_id,
             context_snapshot_id=assignment["assignment_id"],
@@ -110,7 +114,11 @@ class ExperimentScheduler:
             outcomes=outcomes,
             measurement_horizons=measurement_horizons or ["10_minutes", "2_hours", "1_day"],
             preregistration_id=assignment.get("preregistration_id"),
-            data_provenance={"context_snapshot": assignment["context_snapshot"], "manual_or_adapter_capture": True},
+            data_provenance={
+                "context_snapshot": assignment["context_snapshot"],
+                "intervened_context": intervened_context,
+                "manual_or_adapter_capture": True,
+            },
         )
         self.ledger.append("intervention_trial", trial, record_id=trial.trial_id)
         return trial

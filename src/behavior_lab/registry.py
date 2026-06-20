@@ -3,8 +3,12 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
-from behavior_lab.core import EvaluationMetrics, FittedHypothesisRecord, HypothesisSpec, to_jsonable, utc_now
+from behavior_lab.core import EvaluationMetrics, FittedHypothesisRecord, HypothesisSpec, new_id, to_jsonable, utc_now
 from behavior_lab.ledger import ImmutableLedger
+
+
+class EvaluationBudgetError(RuntimeError):
+    pass
 
 
 class ModelRegistry:
@@ -40,10 +44,36 @@ class ModelRegistry:
     def record_evaluation_from_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.ledger.append("evaluation", payload, record_id=f"{payload['model_id']}_{payload['split']}")
 
-    def freeze_candidate(self, model_id: str, split: str, reason: str) -> dict[str, Any]:
+    def assert_evaluation_budget_available(self, *, campaign_id: str, split: str, limit: int = 1) -> None:
+        uses = [
+            payload
+            for payload in self.ledger.payloads("evaluation_budget_use")
+            if payload.get("campaign_id") == campaign_id and payload.get("split") == split
+        ]
+        if len(uses) >= limit:
+            raise EvaluationBudgetError(
+                f"Evaluation budget exhausted for campaign {campaign_id!r} on split {split!r}; "
+                f"limit is {limit}"
+            )
+
+    def record_evaluation_budget_use(self, *, campaign_id: str, model_id: str, split: str, limit: int = 1) -> dict[str, Any]:
+        self.assert_evaluation_budget_available(campaign_id=campaign_id, split=split, limit=limit)
+        return self.ledger.append(
+            "evaluation_budget_use",
+            {
+                "budget_use_id": new_id("budget"),
+                "campaign_id": campaign_id,
+                "model_id": model_id,
+                "split": split,
+                "limit": limit,
+                "used_at": utc_now(),
+            },
+        )
+
+    def freeze_candidate(self, model_id: str, split: str, reason: str, campaign_id: str | None = None) -> dict[str, Any]:
         return self.ledger.append(
             "frozen_candidate",
-            {"model_id": model_id, "split": split, "frozen_at": utc_now(), "reason": reason},
+            {"model_id": model_id, "split": split, "frozen_at": utc_now(), "reason": reason, "campaign_id": campaign_id},
         )
 
     def promote_hypothesis(self, hypothesis_id: str, model_id: str, reason: str) -> dict[str, Any]:
@@ -86,6 +116,7 @@ class ModelRegistry:
             "hypotheses": self.ledger.payloads("hypothesis"),
             "fits": self.ledger.payloads("model_fit"),
             "evaluations": self.ledger.payloads("evaluation"),
+            "evaluation_budget_uses": self.ledger.payloads("evaluation_budget_use"),
             "status_events": self.ledger.payloads("hypothesis_status"),
             "frozen_candidates": self.ledger.payloads("frozen_candidate"),
         }

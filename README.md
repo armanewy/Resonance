@@ -27,8 +27,10 @@ python -m behavior_lab demo
 python -m behavior_lab seed-world --data-dir .behavior_lab --world habit --episodes 200
 python -m behavior_lab run-loop --data-dir .behavior_lab --iterations 5
 python -m behavior_lab verify-ledger --data-dir .behavior_lab
-python -m behavior_lab stress-test --data-dir .stress --episodes 120
-python -m behavior_lab stress-test --data-dir .stress_matrix --episodes 100 --matrix
+python -m behavior_lab stress-test --data-dir runs/stress-habit --episodes 120
+python -m behavior_lab stress-test --data-dir runs/stress-matrix --episodes 100 --matrix
+python -m behavior_lab batch-stress --data-dir runs/batch --worlds habit,threshold --seeds 11,23 --episode-counts 100,300
+python examples/first_research_session.py
 ```
 
 ## Design Notes
@@ -36,9 +38,15 @@ python -m behavior_lab stress-test --data-dir .stress_matrix --episodes 100 --ma
 - The event ledger is append-only JSONL with a hash chain. Edits are represented as new facts, not rewrites.
 - The temporal firewall builds prediction snapshots from pre-decision fields only.
 - Hidden and prospective evaluation do not expose labels or failure rows.
+- Split assignments are append-only ledger records, so existing cases do not migrate between training, development, hidden, and prospective splits when new observations arrive.
+- `ResearchAPI` records hidden/prospective evaluation budget use in the ledger and defaults to one hidden and one prospective submission per campaign.
+- Formula fits are persisted with terms, coefficients, feature schema, and a training snapshot hash, then rehydrated by new `ResearchAPI` sessions.
 - Real intervention launch paths require explicit approval; offline synthetic experiments do not.
 - Hypotheses are executable artifacts with stable IDs, parent lineage, assumptions, falsification conditions, and counted complexity.
 - `ResearchAPI` is the LLM-facing facade for schema inspection, training-data queries, hypothesis submission, fitting, evaluation, residual inspection, model comparison, experiment proposal, simulation, and frozen-candidate submission.
+- `LLMHypothesisGenerator` is a provider-agnostic adapter seam that validates proposed terms against the safe DSL and the variables exposed by `ResearchAPI`.
+- `ResearchAPI.run_offline_experiment` preregisters, randomizes, appends synthetic trials, verifies the ledger, and returns an allowed summary.
+- `batch-stress` runs fixed synthetic research matrices with per-run lock files and idempotent completion records.
 
 
 ## Stress testing
@@ -46,8 +54,8 @@ python -m behavior_lab stress-test --data-dir .stress_matrix --episodes 100 --ma
 Run:
 
 ```powershell
-python -m behavior_lab stress-test --data-dir .stress --episodes 120
-python -m behavior_lab stress-test --data-dir .stress_matrix --episodes 100 --matrix
+python -m behavior_lab stress-test --data-dir runs/stress-habit --episodes 120
+python -m behavior_lab stress-test --data-dir runs/stress-matrix --episodes 100 --matrix
 ```
 
-The stress test is intentionally adversarial for an MVP: it checks temporal-firewall behavior, hidden-label redaction, baseline comparison, and partial recovery of known synthetic drivers. See `docs/STRESS_TEST.md` for the current audit, fixes, and remaining gaps.
+The stress test is intentionally adversarial for an MVP: it checks temporal-firewall behavior, hidden-label redaction, baseline comparison, best-formula mechanism recall, and a separate formula-language known-driver probe. See `docs/STRESS_TEST.md` for the current audit, fixes, and remaining gaps.
