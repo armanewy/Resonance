@@ -92,6 +92,25 @@ def test_public_observations_deduplicate_and_latest_revision_wins() -> None:
     assert rows[0].source_revision == "rev-2"
 
 
+def test_public_observation_same_second_revision_uses_latest_inserted_row() -> None:
+    conn = ensure_database(":memory:")
+    try:
+        ensure_eia_registry(conn)
+        ingested = START + timedelta(hours=2)
+        older = _observation(value=100.0, revision="rev-1", ingested=ingested)
+        newer = _observation(value=150.0, revision="rev-2", ingested=ingested)
+
+        assert insert_public_observations(conn, [older]) == 1
+        assert insert_public_observations(conn, [newer]) == 1
+        rows = fetch_series(conn, "eia_grid_monitor:ISNE:system_load", START, START + timedelta(hours=1))
+    finally:
+        conn.close()
+
+    assert len(rows) == 1
+    assert rows[0].value == 150.0
+    assert rows[0].source_revision == "rev-2"
+
+
 def test_existing_measurements_are_mapped_to_registered_series() -> None:
     conn = ensure_database(":memory:")
     try:

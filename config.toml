@@ -23,3 +23,9 @@ finding_cooldown_hours = 24
 major_strengthening_threshold = 0.20
 request_timeout_seconds = 5
 
+[public_sources.eia_grid]
+enabled = false
+poll_interval_seconds = 3600
+initial_backfill_hours = 720
+normal_lookback_hours = 72
+maximum_gap_repair_hours = 2160

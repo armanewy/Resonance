@@ -34,6 +34,11 @@ def test_configuration_loading_and_validation(tmp_path) -> None:
     assert config.notifications.enabled is False
     assert config.notifications.dry_run_stdout is True
     assert config.notifications.discovery_cooldown_hours == 24
+    assert config.public_sources.eia_grid.enabled is False
+    assert config.public_sources.eia_grid.poll_interval_seconds == 3600
+    assert config.public_sources.eia_grid.initial_backfill_hours == 720
+    assert config.public_sources.eia_grid.normal_lookback_hours == 72
+    assert config.public_sources.eia_grid.maximum_gap_repair_hours == 2160
 
 
 def test_notification_configuration_loading(tmp_path) -> None:
@@ -64,6 +69,30 @@ request_timeout_seconds = 2
     assert config.notifications.major_strengthening_threshold == 0.3
 
 
+def test_public_source_configuration_loading(tmp_path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        VALID_CONFIG
+        + """
+[public_sources.eia_grid]
+enabled = true
+poll_interval_seconds = 1800
+initial_backfill_hours = 24
+normal_lookback_hours = 12
+maximum_gap_repair_hours = 168
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+
+    assert config.public_sources.eia_grid.enabled is True
+    assert config.public_sources.eia_grid.poll_interval_seconds == 1800
+    assert config.public_sources.eia_grid.initial_backfill_hours == 24
+    assert config.public_sources.eia_grid.normal_lookback_hours == 12
+    assert config.public_sources.eia_grid.maximum_gap_repair_hours == 168
+
+
 def test_malformed_configuration_has_helpful_error(tmp_path) -> None:
     path = tmp_path / "config.toml"
     path.write_text(VALID_CONFIG.replace("tcp_test_port = 443", "tcp_test_port = 70000"), encoding="utf-8")
@@ -86,3 +115,17 @@ ntfy_endpoint = "ntfy.example/resonance"
     with pytest.raises(ConfigError, match="notifications.ntfy_endpoint"):
         load_config(path)
 
+
+def test_invalid_public_source_configuration_has_helpful_error(tmp_path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        VALID_CONFIG
+        + """
+[public_sources.eia_grid]
+poll_interval_seconds = 0
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="public_sources.eia_grid.poll_interval_seconds"):
+        load_config(path)

@@ -15,6 +15,7 @@ The system is allowed to remain silent or return `fail`/`inconclusive`. Persuasi
 - `config.toml`: local location, collection, and optional notification settings.
 - `run_local.py`: starts the collector and localhost-only Streamlit dashboard.
 - `resonance/collector.py`, `personal.py`, `weather.py`: data collection.
+- `resonance/public_collector.py`, `resonance/public_sources/`: optional bounded public data collection.
 - `resonance/storage.py`: SQLite schema and storage helpers.
 - `resonance/dashboard.py`, `resonance/ui/`: visual exploration and evidence cards.
 - `resonance/analysis/`: alignment, transformations, lagged association, validation, scanning, and lifecycle.
@@ -30,6 +31,10 @@ The system is allowed to remain silent or return `fail`/`inconclusive`. Persuasi
 python -m pip install -r requirements.txt
 pytest -q
 python run_local.py
+python -m resonance.public_collector
+python -m resonance.public_sources.eia_grid status
+python -m resonance.public_sources.eia_grid backfill --start 2026-06-19T00:00:00Z --end 2026-06-20T00:00:00Z
+python -m resonance.public_sources.eia_grid poll
 python -m resonance.audit --hours 24
 python -m resonance.analyze_pair --x tcp_latency_ms --y cpu_percent --hours 24 --transform first_difference --max-lag-minutes 60
 python -m resonance.scan --hours 168 --dry-run
@@ -45,6 +50,7 @@ Use `python -m resonance.science.cli --help`, `python -m resonance.science.searc
 - Preserve local-only behavior unless a task explicitly changes it.
 - Use UTC for storage and configured local time only for display/calendar semantics.
 - Never forward-fill missing observations implicitly.
+- Keep public-source credentials in environment variables only; never persist API keys in config, SQLite, raw archive metadata, logs, or dashboard output.
 - Use parameterized SQL.
 - Keep external requests explicit, bounded by timeouts, and recoverable.
 - Avoid broad refactors, speculative abstractions, and infrastructure services.

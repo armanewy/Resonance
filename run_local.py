@@ -24,6 +24,7 @@ def main() -> int:
 
     project_root = Path(__file__).resolve().parent
     collector = subprocess.Popen([sys.executable, "-m", "resonance.collector"], cwd=project_root)
+    public_collector = subprocess.Popen([sys.executable, "-m", "resonance.public_collector"], cwd=project_root)
     dashboard = subprocess.Popen(
         [
             sys.executable,
@@ -38,7 +39,7 @@ def main() -> int:
         cwd=project_root,
     )
 
-    processes = {"collector": collector, "dashboard": dashboard}
+    processes = {"collector": collector, "public_collector": public_collector, "dashboard": dashboard}
     print(f"Resonance dashboard: {DASHBOARD_URL}", flush=True)
     print("Press Ctrl+C to stop collector and dashboard.", flush=True)
 
@@ -47,6 +48,8 @@ def main() -> int:
             for name, process in processes.items():
                 code = process.poll()
                 if code is not None:
+                    if name == "public_collector" and code == 0:
+                        continue
                     print(f"{name} exited with code {code}; stopping remaining processes.", flush=True)
                     return code
             stop_requested.wait(1)

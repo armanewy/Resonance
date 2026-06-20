@@ -23,6 +23,7 @@ Run the collector or dashboard separately:
 
 ```bash
 python -m resonance.collector
+python -m resonance.public_collector
 streamlit run resonance/dashboard.py --server.address=127.0.0.1
 ```
 
@@ -31,6 +32,30 @@ streamlit run resonance/dashboard.py --server.address=127.0.0.1
 Edit `config.toml` to set location, timezone, collection intervals, connectivity targets, and optional notifications. The default location is Framingham, Massachusetts.
 
 Personal samples include CPU, memory, network receive/send rates, battery state when available, TCP connection latency, and DNS resolution latency. Weather comes from Open-Meteo. Data is stored in `data/resonance.db` with UTC timestamps; display and calendar-seasonality logic use the configured timezone.
+
+Optional public electricity data uses the official EIA Hourly Electric Grid Monitor API for the ISO New England balancing authority only. It is disabled by default:
+
+```toml
+[public_sources.eia_grid]
+enabled = false
+poll_interval_seconds = 3600
+initial_backfill_hours = 720
+normal_lookback_hours = 72
+maximum_gap_repair_hours = 2160
+```
+
+Enable it by setting `enabled = true` and providing the key through the environment only:
+
+```bash
+# PowerShell: $env:EIA_API_KEY = "your-key-here"
+# cmd.exe: set EIA_API_KEY=your-key-here
+python -m resonance.public_sources.eia_grid status
+python -m resonance.public_sources.eia_grid backfill --start 2026-06-19T00:00:00Z --end 2026-06-20T00:00:00Z
+python -m resonance.public_sources.eia_grid poll
+python -m resonance.public_collector
+```
+
+Do not place `EIA_API_KEY` in `config.toml`. Raw public responses are archived under `data/public/raw/eia_grid_monitor/YYYY/MM/DD/`, keyed by SHA-256, while per-fetch metadata is stored separately in SQLite. `python run_local.py` starts the personal/weather collector, public collector, and dashboard; when public EIA collection is disabled, the public collector exits cleanly without failing local startup.
 
 Audit recent coverage and collector health:
 
@@ -226,6 +251,7 @@ All persistent data remains local except explicit outbound operations:
 - TCP connectivity checks to the configured host and port.
 - DNS lookup of the configured hostname.
 - Optional `ntfy` HTTP notifications when enabled.
+- Optional EIA Hourly Electric Grid Monitor requests when `[public_sources.eia_grid]` is enabled and `EIA_API_KEY` is present in the environment.
 - Optional LLM provider calls explicitly initiated by the user.
 
 The blind partition is architecturally sealed inside one local Python project; it is not protected from a machine owner who intentionally reads or edits the artifact files. Correlation thresholds are conservative prototype defaults, not proof of causality. See `docs/scientific_loop.md` and `AUDIT.md` for the exact integrity model and current limitations.

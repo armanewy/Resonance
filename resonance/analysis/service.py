@@ -346,7 +346,13 @@ def _fetch_public_summary_rows(
               FROM public_observations newer
               WHERE newer.series_id = o.series_id
                 AND newer.source_observation_key = o.source_observation_key
-                AND newer.ingested_at_utc > o.ingested_at_utc
+                AND (
+                    newer.ingested_at_utc > o.ingested_at_utc
+                    OR (
+                        newer.ingested_at_utc = o.ingested_at_utc
+                        AND newer.observation_id > o.observation_id
+                    )
+                )
           )
         ORDER BY s.display_name ASC, o.valid_start_utc ASC
         """,

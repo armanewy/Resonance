@@ -45,10 +45,25 @@ class NotificationConfig:
 
 
 @dataclass(frozen=True)
+class EiaGridPublicSourceConfig:
+    enabled: bool
+    poll_interval_seconds: int
+    initial_backfill_hours: int
+    normal_lookback_hours: int
+    maximum_gap_repair_hours: int
+
+
+@dataclass(frozen=True)
+class PublicSourcesConfig:
+    eia_grid: EiaGridPublicSourceConfig
+
+
+@dataclass(frozen=True)
 class AppConfig:
     location: LocationConfig
     collection: CollectionConfig
     notifications: NotificationConfig
+    public_sources: PublicSourcesConfig
 
 
 def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> AppConfig:
@@ -63,6 +78,8 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> AppConfig:
     location = _require_table(raw, "location")
     collection = _require_table(raw, "collection")
     notifications = _optional_table(raw, "notifications")
+    public_sources = _optional_table(raw, "public_sources")
+    eia_grid = _optional_table(public_sources, "eia_grid")
 
     name = _required_str(location, "location.name")
     latitude = _required_float(location, "location.latitude")
@@ -148,6 +165,20 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> AppConfig:
     if request_timeout_seconds <= 0:
         raise ConfigError("notifications.request_timeout_seconds must be positive")
 
+    eia_enabled = _optional_bool(eia_grid, "public_sources.eia_grid.enabled", False)
+    eia_poll_interval = _optional_int(eia_grid, "public_sources.eia_grid.poll_interval_seconds", 3600)
+    eia_initial_backfill = _optional_int(eia_grid, "public_sources.eia_grid.initial_backfill_hours", 720)
+    eia_normal_lookback = _optional_int(eia_grid, "public_sources.eia_grid.normal_lookback_hours", 72)
+    eia_max_gap_repair = _optional_int(eia_grid, "public_sources.eia_grid.maximum_gap_repair_hours", 2160)
+    if eia_poll_interval <= 0:
+        raise ConfigError("public_sources.eia_grid.poll_interval_seconds must be positive")
+    if eia_initial_backfill <= 0:
+        raise ConfigError("public_sources.eia_grid.initial_backfill_hours must be positive")
+    if eia_normal_lookback <= 0:
+        raise ConfigError("public_sources.eia_grid.normal_lookback_hours must be positive")
+    if eia_max_gap_repair <= 0:
+        raise ConfigError("public_sources.eia_grid.maximum_gap_repair_hours must be positive")
+
     return AppConfig(
         location=LocationConfig(
             name=name,
@@ -173,6 +204,15 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> AppConfig:
             finding_cooldown_hours=finding_cooldown_hours,
             major_strengthening_threshold=major_strengthening_threshold,
             request_timeout_seconds=request_timeout_seconds,
+        ),
+        public_sources=PublicSourcesConfig(
+            eia_grid=EiaGridPublicSourceConfig(
+                enabled=eia_enabled,
+                poll_interval_seconds=eia_poll_interval,
+                initial_backfill_hours=eia_initial_backfill,
+                normal_lookback_hours=eia_normal_lookback,
+                maximum_gap_repair_hours=eia_max_gap_repair,
+            )
         ),
     )
 
@@ -245,4 +285,3 @@ def _optional_int(table: dict, dotted_key: str, default: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ConfigError(f"{dotted_key} must be an integer")
     return value
-

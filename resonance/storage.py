@@ -115,6 +115,31 @@ class PublicRawArchive:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class PublicFetchEvent:
+    source_id: str
+    retrieved_at_utc: datetime
+    request_url: str
+    status_code: int | None
+    content_sha256: str
+    route: str
+    page_offset: int
+    request_metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PublicCollectionState:
+    source_id: str
+    route: str
+    last_successful_poll_utc: datetime | None = None
+    newest_complete_valid_period_utc: datetime | None = None
+    earliest_unresolved_gap_utc: datetime | None = None
+    latest_error_utc: datetime | None = None
+    latest_error: str = ""
+    consecutive_failure_count: int = 0
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
 def connect(db_path: str | Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     path = Path(db_path)
     if str(path) != ":memory:":
@@ -248,6 +273,22 @@ def init_db(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS public_fetch_events (
+            fetch_id INTEGER PRIMARY KEY,
+            source_id TEXT NOT NULL,
+            retrieved_at_utc TEXT NOT NULL,
+            request_url TEXT NOT NULL,
+            status_code INTEGER,
+            content_sha256 TEXT NOT NULL,
+            route TEXT NOT NULL,
+            page_offset INTEGER NOT NULL,
+            request_metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(source_id) REFERENCES public_sources(source_id)
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS public_observations (
             observation_id INTEGER PRIMARY KEY,
             series_id TEXT NOT NULL,
@@ -264,6 +305,23 @@ def init_db(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(series_id) REFERENCES series_registry(series_id),
             FOREIGN KEY(raw_archive_sha256) REFERENCES public_raw_archives(sha256),
             UNIQUE(series_id, source_observation_key, source_revision)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS public_collection_state (
+            source_id TEXT NOT NULL,
+            route TEXT NOT NULL,
+            last_successful_poll_utc TEXT,
+            newest_complete_valid_period_utc TEXT,
+            earliest_unresolved_gap_utc TEXT,
+            latest_error_utc TEXT,
+            latest_error TEXT NOT NULL DEFAULT '',
+            consecutive_failure_count INTEGER NOT NULL DEFAULT 0,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY(source_id, route),
+            FOREIGN KEY(source_id) REFERENCES public_sources(source_id)
         )
         """
     )
@@ -332,6 +390,18 @@ def init_db(conn: sqlite3.Connection) -> None:
         """
         CREATE INDEX IF NOT EXISTS idx_public_raw_archives_source_time
         ON public_raw_archives(source_id, retrieved_at_utc)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_public_fetch_events_source_time
+        ON public_fetch_events(source_id, retrieved_at_utc)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_public_collection_state_source
+        ON public_collection_state(source_id, route)
         """
     )
     _ensure_existing_measurement_series(conn)
@@ -489,13 +559,7 @@ def record_public_raw_archive(conn: sqlite3.Connection, archive: PublicRawArchiv
         INSERT INTO public_raw_archives (
             sha256, source_id, retrieved_at_utc, request_url, status_code, path, metadata_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(sha256) DO UPDATE SET
-            source_id = excluded.source_id,
-            retrieved_at_utc = excluded.retrieved_at_utc,
-            request_url = excluded.request_url,
-            status_code = excluded.status_code,
-            path = excluded.path,
-            metadata_json = excluded.metadata_json
+        ON CONFLICT(sha256) DO NOTHING
         """,
         (
             archive.sha256,
@@ -506,6 +570,102 @@ def record_public_raw_archive(conn: sqlite3.Connection, archive: PublicRawArchiv
             archive.path,
             _json_dumps(archive.metadata),
         ),
+    )
+
+
+def record_public_fetch_event(conn: sqlite3.Connection, event: PublicFetchEvent) -> int:
+    cursor = conn.execute(
+        """
+        INSERT INTO public_fetch_events (
+            source_id,
+            retrieved_at_utc,
+            request_url,
+            status_code,
+            content_sha256,
+            route,
+            page_offset,
+            request_metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            event.source_id,
+            to_utc_iso(event.retrieved_at_utc),
+            event.request_url,
+            event.status_code,
+            event.content_sha256,
+            event.route,
+            int(event.page_offset),
+            _json_dumps(event.request_metadata),
+        ),
+    )
+    return int(cursor.lastrowid)
+
+
+def upsert_public_collection_state(conn: sqlite3.Connection, state: PublicCollectionState) -> None:
+    conn.execute(
+        """
+        INSERT INTO public_collection_state (
+            source_id,
+            route,
+            last_successful_poll_utc,
+            newest_complete_valid_period_utc,
+            earliest_unresolved_gap_utc,
+            latest_error_utc,
+            latest_error,
+            consecutive_failure_count,
+            metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source_id, route) DO UPDATE SET
+            last_successful_poll_utc = excluded.last_successful_poll_utc,
+            newest_complete_valid_period_utc = excluded.newest_complete_valid_period_utc,
+            earliest_unresolved_gap_utc = excluded.earliest_unresolved_gap_utc,
+            latest_error_utc = excluded.latest_error_utc,
+            latest_error = excluded.latest_error,
+            consecutive_failure_count = excluded.consecutive_failure_count,
+            metadata_json = excluded.metadata_json
+        """,
+        (
+            state.source_id,
+            state.route,
+            to_utc_iso(state.last_successful_poll_utc) if state.last_successful_poll_utc else None,
+            to_utc_iso(state.newest_complete_valid_period_utc) if state.newest_complete_valid_period_utc else None,
+            to_utc_iso(state.earliest_unresolved_gap_utc) if state.earliest_unresolved_gap_utc else None,
+            to_utc_iso(state.latest_error_utc) if state.latest_error_utc else None,
+            state.latest_error,
+            int(state.consecutive_failure_count),
+            _json_dumps(state.metadata),
+        ),
+    )
+
+
+def fetch_public_collection_state(
+    conn: sqlite3.Connection,
+    *,
+    source_id: str,
+    route: str,
+) -> PublicCollectionState | None:
+    row = conn.execute(
+        """
+        SELECT source_id, route, last_successful_poll_utc, newest_complete_valid_period_utc,
+               earliest_unresolved_gap_utc, latest_error_utc, latest_error,
+               consecutive_failure_count, metadata_json
+        FROM public_collection_state
+        WHERE source_id = ? AND route = ?
+        """,
+        (source_id, route),
+    ).fetchone()
+    if row is None:
+        return None
+    return PublicCollectionState(
+        source_id=row["source_id"],
+        route=row["route"],
+        last_successful_poll_utc=parse_utc(row["last_successful_poll_utc"]) if row["last_successful_poll_utc"] else None,
+        newest_complete_valid_period_utc=parse_utc(row["newest_complete_valid_period_utc"]) if row["newest_complete_valid_period_utc"] else None,
+        earliest_unresolved_gap_utc=parse_utc(row["earliest_unresolved_gap_utc"]) if row["earliest_unresolved_gap_utc"] else None,
+        latest_error_utc=parse_utc(row["latest_error_utc"]) if row["latest_error_utc"] else None,
+        latest_error=row["latest_error"] or "",
+        consecutive_failure_count=int(row["consecutive_failure_count"] or 0),
+        metadata=json.loads(row["metadata_json"] or "{}"),
     )
 
 

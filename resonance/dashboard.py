@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import timedelta
 from io import StringIO
 from typing import Any, Mapping
@@ -20,6 +21,8 @@ from resonance.analysis.service import (
     list_analyzable_metrics,
 )
 from resonance.config import ConfigError, load_config
+from resonance.public_health import eia_source_health_rows
+from resonance.public_sources.eia_grid import SOURCE_ID
 from resonance.storage import (
     DEFAULT_DB_PATH,
     CorrelationFinding,
@@ -35,7 +38,7 @@ from resonance.storage import (
     recent_errors,
     sample_counts_by_metric,
 )
-from resonance.time_utils import parse_utc, utc_now
+from resonance.time_utils import parse_utc, to_utc_iso, utc_now
 from resonance.ui import (
     aligned_transformed_timeline,
     lag_profile,
@@ -124,6 +127,7 @@ def main() -> None:
         _render_utilization(df)
         _render_network(df)
         _render_weather(df)
+        _render_public_sources(conn, config, now_utc, local_tz, start_utc)
         _render_tables(conn, start_utc, now_utc, df)
         _render_pair_explorer(DEFAULT_DB_PATH, now_utc)
     finally:
@@ -379,6 +383,70 @@ def _render_weather(df: pd.DataFrame) -> None:
     fig.update_yaxes(title_text="mm", row=2, col=1)
     fig.update_yaxes(title_text="km/h", row=3, col=1)
     _show_chart(fig, height=620)
+
+
+def _render_public_sources(conn, config, now_utc, local_tz: ZoneInfo, start_utc) -> None:
+    st.subheader("Public data sources")
+    rows = eia_source_health_rows(
+        conn,
+        config=config.public_sources.eia_grid,
+        now_utc=now_utc,
+        credential_available=bool(os.environ.get("EIA_API_KEY")),
+    )
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    chart_rows = _eia_chart_rows(conn, start_utc, now_utc, local_tz)
+    if not chart_rows:
+        return
+    chart_df = pd.DataFrame(chart_rows)
+    fig = go.Figure()
+    for label, group in chart_df.groupby("series"):
+        fig.add_trace(
+            go.Scatter(
+                x=group["local_time"],
+                y=group["value"],
+                mode="lines+markers",
+                name=label,
+            )
+        )
+    fig.update_yaxes(title_text="MWh")
+    _show_chart(fig)
+
+
+def _eia_chart_rows(conn, start_utc, end_utc, local_tz: ZoneInfo) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT s.display_name, o.valid_start_utc, o.value
+        FROM public_observations o
+        JOIN series_registry s ON s.series_id = o.series_id
+        WHERE s.source_id = ?
+          AND o.valid_start_utc >= ?
+          AND o.valid_start_utc <= ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM public_observations newer
+              WHERE newer.series_id = o.series_id
+                AND newer.source_observation_key = o.source_observation_key
+                AND (
+                    newer.ingested_at_utc > o.ingested_at_utc
+                    OR (
+                        newer.ingested_at_utc = o.ingested_at_utc
+                        AND newer.observation_id > o.observation_id
+                    )
+                )
+          )
+        ORDER BY o.valid_start_utc ASC, s.display_name ASC
+        """,
+        (SOURCE_ID, to_utc_iso(start_utc), to_utc_iso(end_utc)),
+    ).fetchall()
+    return [
+        {
+            "series": row["display_name"],
+            "local_time": parse_utc(row["valid_start_utc"]).astimezone(local_tz),
+            "value": float(row["value"]),
+        }
+        for row in rows
+    ]
 
 
 def _render_tables(conn, start_utc, now_utc, df: pd.DataFrame) -> None:
