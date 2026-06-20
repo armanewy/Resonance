@@ -4,7 +4,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 
-from resonance.analysis.scanner import ScannerOptions, scan_correlations
+from resonance.analysis.scanner import ScannerOptions, _adjust_p_values, scan_correlations
 from resonance.storage import (
     Measurement,
     ensure_database,
@@ -104,6 +104,16 @@ def test_scan_cli_is_silent_when_nothing_passes(tmp_path) -> None:
     assert result.returncode == 0
     assert result.stdout == ""
     assert result.stderr == ""
+
+
+def test_default_by_adjustment_is_more_conservative_than_bh() -> None:
+    p_values = [0.01, 0.02, 0.04]
+
+    bh = _adjust_p_values(p_values, total_tests=3, method="bh")
+    by = _adjust_p_values(p_values, total_tests=3, method="by")
+
+    assert all(by_value >= bh_value for by_value, bh_value in zip(by, bh, strict=True))
+    assert any(by_value > bh_value for by_value, bh_value in zip(by, bh, strict=True))
 
 
 def _write_scenario_db(

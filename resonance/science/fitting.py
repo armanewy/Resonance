@@ -11,17 +11,22 @@ from scipy.optimize import least_squares
 from resonance.science.contracts import (
     HypothesisSpec,
     ParameterBounds,
-    TargetTransform,
     canonical_json,
     expression_metrics,
     expression_node_count,
     expression_parameters,
     stable_hash,
 )
+from resonance.science.evaluation import (
+    baseline_metric_bundles,
+    metric_bundle,
+    normalize_transform_config,
+    transform_target,
+)
 from resonance.science.interpreter import ExecutionLimits, evaluate_expression, to_time_series_frame
 
 
-EVALUATOR_VERSION = "science-fitting-v1"
+EVALUATOR_VERSION = "science-fitting-v2"
 DEFAULT_COMPLEXITY_WEIGHT = 0.001
 
 
@@ -38,6 +43,7 @@ class FitResult:
     complexity: dict[str, Any]
     convergence_status: dict[str, Any]
     warnings: list[str]
+    target_transform_config: dict[str, Any]
     deterministic_fit_artifact: dict[str, Any]
 
     def artifact_hash(self) -> str:
@@ -64,6 +70,7 @@ def fit_hypothesis(
     exploration_data: pd.DataFrame | pd.Series | np.ndarray | Mapping[str, Any],
     *,
     complexity_weight: float = DEFAULT_COMPLEXITY_WEIGHT,
+    transform_config: Mapping[str, Any] | None = None,
 ) -> FitResult:
     """Fit declared parameters using exploration data only."""
 
@@ -77,7 +84,16 @@ def fit_hypothesis(
         names = ", ".join(sorted(missing_inputs))
         raise FittingError(f"input metrics missing from exploration data: {names}")
 
-    target = _target_series(frame[hypothesis.target_metric], hypothesis.target_transform)
+    target_transform_config = normalize_transform_config(
+        hypothesis.target_transform,
+        frame.index,
+        transform_config,
+    )
+    target = transform_target(
+        frame[hypothesis.target_metric],
+        hypothesis.target_transform,
+        target_transform_config,
+    )
     parameter_names = sorted(expression_parameters(hypothesis.expression))
     _validate_parameter_bounds(parameter_names, hypothesis.parameter_bounds)
     fixed_parameters, variable_names, lower_bounds, upper_bounds, initial_values = _initial_parameters(
@@ -163,6 +179,7 @@ def fit_hypothesis(
 
     deterministic_fit_artifact = _fit_artifact(
         hypothesis,
+        target_transform_config,
         fitted_parameters,
         convergence_status,
         exploration_metrics,
@@ -182,26 +199,9 @@ def fit_hypothesis(
         complexity=complexity,
         convergence_status=convergence_status,
         warnings=warnings,
+        target_transform_config=target_transform_config,
         deterministic_fit_artifact=deterministic_fit_artifact,
     )
-
-
-def _target_series(series: pd.Series, transform: TargetTransform) -> pd.Series:
-    source = series.astype("float64")
-    if transform == TargetTransform.IDENTITY:
-        return source
-    if transform == TargetTransform.DIFFERENCE:
-        return source - source.shift(1)
-    if transform == TargetTransform.ROBUST_ZSCORE:
-        finite = source.dropna()
-        if finite.empty:
-            return source * np.nan
-        median = float(finite.median())
-        mad = float((finite - median).abs().median())
-        if mad <= 1.0e-12:
-            return source * np.nan
-        return (source - median) / (1.4826 * mad)
-    raise FittingError(f"unsupported target transform: {transform}")
 
 
 def _validate_parameter_bounds(
@@ -266,16 +266,7 @@ def _valid_pair(left: pd.Series, right: pd.Series) -> tuple[pd.Series, pd.Series
 
 
 def _metrics(target: pd.Series, prediction: pd.Series) -> dict[str, Any]:
-    residuals = prediction - target
-    mae = float(residuals.abs().mean())
-    rmse = float(np.sqrt(np.mean(np.square(residuals))))
-    spearman = target.corr(prediction, method="spearman")
-    return {
-        "n": int(len(target)),
-        "mae": mae,
-        "rmse": rmse,
-        "spearman_rho": _json_float(spearman),
-    }
+    return metric_bundle(target, prediction).to_dict()
 
 
 def _blocked_diagnostics(target: pd.Series, prediction: pd.Series, blocks: int = 4) -> list[dict[str, Any]]:
@@ -301,19 +292,10 @@ def _blocked_diagnostics(target: pd.Series, prediction: pd.Series, blocks: int =
 
 
 def _baseline_metrics(target: pd.Series) -> dict[str, Any]:
-    zero = pd.Series(0.0, index=target.index, dtype="float64")
-    zero_target, zero_prediction = _valid_pair(target, zero)
-    baselines: dict[str, Any] = {
-        "zero_residual": _metrics(zero_target, zero_prediction) if not zero_target.empty else None
+    return {
+        name: bundle.to_dict()
+        for name, bundle in baseline_metric_bundles(target).items()
     }
-    persistence = target.shift(1)
-    persistence_target, persistence_prediction = _valid_pair(target, persistence)
-    baselines["persistence"] = (
-        _metrics(persistence_target, persistence_prediction)
-        if len(persistence_target) >= 2
-        else None
-    )
-    return baselines
 
 
 def _complexity(hypothesis: HypothesisSpec, complexity_weight: float) -> dict[str, Any]:
@@ -341,6 +323,7 @@ def _append_metric_warnings(warnings: list[str], prefix: str, metrics: dict[str,
 
 def _fit_artifact(
     hypothesis: HypothesisSpec,
+    target_transform_config: dict[str, Any],
     fitted_parameters: dict[str, float],
     convergence_status: dict[str, Any],
     exploration_metrics: dict[str, Any],
@@ -353,6 +336,7 @@ def _fit_artifact(
     return {
         "evaluator_version": EVALUATOR_VERSION,
         "hypothesis_hash": hypothesis.hypothesis_hash(),
+        "target_transform_config": dict(target_transform_config),
         "optimizer_seed": int(hypothesis.random_seed),
         "parameter_order": sorted(fitted_parameters),
         "optimized_parameter_order": list(variable_names),

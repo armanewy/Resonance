@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from resonance.science import HypothesisSpec
+from resonance.science.evaluation import evaluate_program, metric_bundle
 from resonance.science.fitting import FittingError, fit_hypothesis
 
 
@@ -151,6 +152,45 @@ def test_fitting_is_deterministic() -> None:
 
     assert first.fitted_parameters == second.fitted_parameters
     assert first.deterministic_fit_artifact == second.deterministic_fit_artifact
+
+
+def test_fitting_metrics_match_the_shared_frozen_program_evaluator() -> None:
+    index = pd.date_range("2026-01-01", periods=40, freq="5min", tz="UTC")
+    x = pd.Series(np.linspace(-2.0, 3.0, len(index)), index=index)
+    y = x.shift(2) * 1.75 - 0.4
+    frame = pd.DataFrame({"x": x, "y": y}, index=index)
+    hypothesis = _hypothesis(
+        {
+            "node": "add",
+            "left": {
+                "node": "multiply",
+                "left": {"node": "fitted_parameter", "parameter": "scale"},
+                "right": {
+                    "node": "lag",
+                    "input": {"node": "metric", "metric": "x"},
+                    "lag_seconds": 600,
+                },
+            },
+            "right": {"node": "fitted_parameter", "parameter": "offset"},
+        },
+        bounds={
+            "scale": {"lower": -5.0, "upper": 5.0},
+            "offset": {"lower": -5.0, "upper": 5.0},
+        },
+        maximum_lag_seconds=600,
+    )
+
+    fitted = fit_hypothesis(hypothesis, frame)
+    evaluated = evaluate_program(
+        hypothesis,
+        frame,
+        parameters=fitted.fitted_parameters,
+        transform_config=fitted.target_transform_config,
+    )
+    shared_metrics = metric_bundle(evaluated.target, evaluated.prediction).to_dict()
+
+    for key, value in shared_metrics.items():
+        assert fitted.exploration_metrics[key] == value
 
 
 def test_null_expression_does_not_beat_zero_residual_baseline() -> None:

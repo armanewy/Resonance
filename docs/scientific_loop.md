@@ -1,188 +1,141 @@
 # Sealed Scientific Loop
 
-This document defines the initial architecture contract for pivoting Resonance
-toward a sealed scientific hypothesis-testing loop. It is documentation only:
-it does not implement production functionality or change current analysis
-behavior.
+This document defines the implemented integrity contract for Resonance's experimental scientific loop.
 
-The current repository already contains local SQLite measurements, pairwise
-analysis contracts, lagged association scans, synthetic scenarios, Pair Explorer
-helpers, scanner lifecycle events, and deterministic tests. This contract sets
-the boundary for future work so those pieces can evolve without leaking blind
-observations, executing generated code, or overstating causal claims.
+## Intended process
 
-## Goals
+```text
+exploration-only summaries
+        ↓
+structured hypothesis imagination
+        ↓
+restricted executable expression
+        ↓
+numerical fitting on exploration
+        ↓
+candidate/program selection on tuning
+        ↓
+preregistration of exact semantics
+        ↓
+one-shot blind evaluation
+        ↓
+pass / fail / inconclusive
+        ↓
+optional manual controlled experiment
+        ↓
+tamper-evident scientific memory
+```
 
-- Separate exploration, tuning, preregistration, and blind evaluation.
-- Preserve negative and inconclusive results alongside positive results.
-- Make every result reproducible by recording data, code, evaluator, hypothesis,
-  and artifact identities.
-- Keep the first implementation local, conservative, and human-operated.
+The generator is replaceable. The deterministic evaluator and memory are authoritative.
 
-## Chronological Dataset Layout
+## Dataset seal
 
-Each data snapshot used for a scientific run is split by timestamp:
+Each snapshot is content-addressed and split chronologically:
 
 - `exploration`: first 50% of eligible observations.
-- `tuning`: next 25% of eligible observations.
-- `blind`: final 25% of eligible observations.
+- `tuning`: next 25%.
+- `blind`: final 25%.
 
-An embargo gap is required around each split boundary. The gap on each side of a
-boundary must be at least as large as the maximum searched lag for that run. If
-the requested maximum lag makes the embargo leave too little data for any
-partition, the run must fail closed and record an inconclusive result instead of
-shrinking the embargo silently.
+An embargo at least as large as the maximum searched lag surrounds each split boundary. If the embargo leaves insufficient observations, snapshot creation fails closed. Missing observations remain missing; no forward filling occurs.
 
-The split identity is part of preregistration. It must name the data snapshot,
-eligible timestamp range, partition boundaries, embargo duration, maximum
-searched lag, and any inclusion or exclusion rules.
+The exploration loader cannot return blind rows. The blind loader requires an internal evaluator capability. This is an architectural separation, not OS-level protection from the machine owner.
 
-## Roles
+## Roles and permissions
 
-### Explorer
+### Explorer and proposer
 
-The Explorer may inspect only the exploration partition. It produces summaries,
-plots, descriptive diagnostics, and candidate questions. It may not inspect
-tuning or blind observations, tune thresholds on tuning outcomes, or create
-claims that require blind evaluation.
+They receive exploration observations or a `DiscoveryBrief` derived only from exploration. They may inspect summaries and prior selected memory, then produce structured `HypothesisSpec` objects. They never receive tuning/blind rows or blind outcomes for the current snapshot.
 
-### Hypothesis Proposer
+### Restricted program
 
-The Hypothesis proposer may receive exploration summaries and prior
-scientific-memory records. It must not receive tuning observations, blind
-observations, or tuning outcomes. It produces structured hypotheses, not
-executable arbitrary code.
+A hypothesis compiles to a bounded expression AST. Allowed operations include metric references, constants, fitted parameters, arithmetic, safe division, clipping, differences, nonnegative lags, rolling means/standard deviations, and robust z-scores. The interpreter performs explicit dispatch; it never uses `eval`, `exec`, a shell, dynamic imports, filesystem access, or network access.
 
-### Numerical Fitter
+### Numerical fitter
 
-The Numerical fitter estimates numeric parameters using exploration data only.
-It may fit coefficients, lags, windows, and thresholds that are explicitly part
-of a candidate hypothesis. It must record the input data snapshot, seed for any
-random process, fitted values, fitting method, warnings, and artifact hashes.
+Numeric parameters are fitted on exploration data only. The current observational-prediction contract optimizes RMSE. Random seeds, bounds, convergence details, evaluator version, target transform configuration, and artifacts are recorded.
 
-### Program Searcher
+### Program searcher and tuning selector
 
-The Program searcher may compare candidate hypotheses or restricted expression
-programs using exploration and tuning data. It must never access blind data and
-must never query the blind evaluator. It may choose among candidates before
-preregistration, but it cannot change a candidate after preregistration.
+Candidate structure may be mutated/searched under a fixed budget. Fitting uses exploration; ranking uses tuning. Search cannot load blind data. It may return no winner and favors simpler programs when performance is effectively tied.
 
-### Preregistration Gate
+### Preregistration gate
 
-The Preregistration gate freezes the hypothesis, restricted expression program,
-metrics, thresholds, negative controls, split identity, and evaluator version
-before blind evaluation. It computes and stores the hypothesis hash and artifact
-hashes. After this gate, any change requires a new preregistration record.
+Preregistration freezes:
 
-### Blind Evaluator
+- Snapshot and split identities.
+- Exact expression and fitted parameters.
+- Target/input metrics.
+- Explicit target-transform semantics.
+- Frozen baseline strategy.
+- Requested blind metrics.
+- Minimum effect and baseline-improvement thresholds.
+- Negative controls and falsification conditions.
+- Evaluator version and evaluator identity hash.
+- Random seed and evaluation budget.
 
-The Blind evaluator loads the blind partition internally. It evaluates a
-preregistered hypothesis once, does not expose blind observations, and records
-that the blind budget for that preregistered hypothesis was consumed. It returns
-only preregistered metrics, pass/fail or inconclusive status, warnings, and
-artifact hashes.
+The evaluator identity fingerprints critical evaluator source files and key numerical-library versions. An unrelated Git commit is retained as provenance but does not invalidate an otherwise identical evaluator.
 
-### Experiment Planner
+### Blind evaluator
 
-The Experiment planner may initially propose only low-risk, reversible,
-human-executed experiments. It may not control hardware, change machine
-settings automatically, manipulate medical or behavioral conditions, or execute
-interventions without explicit human action and review.
+The blind evaluator atomically appends `blind_evaluation_started` before it loads blind observations. That claim consumes the one-shot budget even if evaluation subsequently crashes. A repeated evaluation for the same preregistration or snapshot+hypothesis scientific object is refused.
 
-### Scientific Ledger
+The evaluator uses the same restricted-program and target-transform implementation as fitting/tuning. It recomputes the preregistered baseline strategy on the blind partition; tuning baseline values are provenance only. It returns aggregate preregistered metrics, controls, warnings, and `pass`, `fail`, or `inconclusive`. Raw blind rows are not included in result objects or artifacts.
 
-The Scientific ledger is append-only through the application interface. It
-records proposals, fits, preregistrations, evaluations, failures, corrections,
-experiments, and replications. Corrections create new records rather than
-modifying old records.
+A future retry requires a new future-data snapshot.
 
-The first local ledger is tamper-evident, not literally immutable against a
-machine owner intentionally rewriting the repository, database, or artifacts.
-Tamper evidence should come from chained hashes, artifact hashes, timestamps,
-and explicit data/code identities, but local ownership still implies ultimate
-write access.
+### Controlled experiment planner and runner
 
-## Restricted Hypothesis Form
+Only low-risk, reversible, human-executed N-of-1 protocols are currently permitted. Schedules and primary outcomes are frozen before execution. Every block requires confirmation. Missed, noncompliant, aborted, failed, and completed experiments remain recorded. No hardware or OS setting is changed automatically.
 
-Hypotheses must compile to a restricted expression DSL. The DSL may represent
-approved metric references, transforms, lags, fitted numeric parameters,
-comparisons, aggregations, and preregistered metrics. It must not allow
-arbitrary Python, shell commands, filesystem access, network access, imports,
-reflection, or dynamic execution.
+### Scientific ledger
 
-Natural-language explanations may accompany a hypothesis or result, but they
-never override numerical results. If the explanation and numerical result
-conflict, the ledger must preserve the conflict and treat the numerical result
-as authoritative.
+The JSONL ledger is append-only through the application interface. Each canonical entry includes a sequence number, timestamp, event type, payload/artifact hashes, code commit, previous-entry hash, and entry hash. File locking and complete-line writes protect normal concurrent appends. Verification detects edits, line deletion, insertion/reordering, broken links, and truncation.
 
-## Required Invariants
+This is tamper-evident memory, not literal immutability against the machine owner. Corrections and supersessions append new records; old records are not rewritten.
 
-- The LLM never sees blind observations.
-- No arbitrary Python generated by an LLM is executed.
-- Hypotheses compile to a restricted expression DSL.
-- Program search may not query the blind evaluator.
-- One blind evaluation is allowed per preregistered hypothesis.
-- Repeating a blind evaluation requires a new future-data snapshot.
-- Natural-language explanations never override numerical results.
-- Negative and inconclusive results are retained.
-- "Associated with" and "predicts in this dataset" are allowed.
-- "Causes" is prohibited unless supported by an intervention.
-- Any random process must have a stored seed.
-- Every result must identify data snapshot, code commit, evaluator version,
-  hypothesis hash, and artifact hashes.
+## Shared evaluation semantics
 
-## Claim Language
+`resonance/science/evaluation.py` is the common source for target transforms, frozen program evaluation, metrics, baseline construction, improvement calculations, movement-direction agreement, and window diagnostics. Fitting, tuning, and blind evaluation must not independently reinterpret the same hypothesis.
 
-Allowed claim language is deliberately narrow:
+Time-based lag and rolling operations use timestamp semantics and present/past values only. Transform parameters such as difference periods and robust-z-score windows are made explicit before preregistration.
 
-- Use "associated with" for non-directional statistical relationships.
-- Use "predicts in this dataset" only when a preregistered predictive metric was
-  evaluated on the blind partition.
-- Use "inconclusive" when thresholds, overlap, controls, or diagnostics are not
-  sufficient.
-- Do not use "causes" unless the result is supported by an intervention.
+## Claim language
 
-Current pairwise scanner and Pair Explorer language should remain
-association-oriented unless and until an intervention-backed workflow exists.
+- Use `associated with` for observational relationships.
+- Use `X precedes Y in this dataset` for a stable lagged relationship.
+- Use `predicts in this dataset` only after preregistered blind evaluation.
+- Use `inconclusive` when overlap, controls, stability, effect, or baseline improvement is insufficient.
+- Never use `causes` without a controlled intervention supporting that claim.
 
-## Result Identity
+Natural-language interpretation can criticize or explain a result but cannot change the numerical verdict.
 
-Every result record must include:
+## Required memory
 
-- Data snapshot identity and partition split identity.
-- Code commit.
-- Evaluator version.
-- Hypothesis hash.
-- Artifact hashes for input summaries, frozen programs, fit outputs, metrics,
-  plots, and evaluator outputs.
-- Stored seed for every random process, including permutations, search,
-  synthetic data generation, sampling, and randomized controls.
+The ledger/artifact graph retains:
 
-## Negative Controls and Failures
+- Accepted, rejected, invalid, duplicate, and superseded hypotheses.
+- Exploration fits and baselines.
+- Tuning selections and non-selections.
+- Program-search lineage and budgets.
+- Preregistrations and one-shot claims.
+- Blind passes, failures, errors, and inconclusive outcomes.
+- Negative controls and counterevidence.
+- Planned, aborted, noncompliant, and completed experiments.
+- Prospective replications and later contradictions.
 
-Preregistration must include negative controls when applicable. Blind evaluation
-must record failures, failed controls, missing data, low overlap, and
-inconclusive outcomes. These records stay in the ledger and are not replaced by
-later corrections or replications.
+Every reproducible result identifies its dataset snapshot, hypothesis, evaluator/code identity, random seed, parameters, metrics, and artifact hashes.
 
-## Initial Scope
+## Deliberate limits
 
-Not part of the initial scientific loop:
+The current system does not provide:
 
-- Automatic hardware interventions.
-- Medical or behavioral experimentation.
-- Arbitrary generated code.
 - General causal discovery.
-- Scientific paper generation.
-- Thousands of automatically proposed hypotheses.
-- Cloud orchestration.
-- Multi-user collaboration.
-- Public hypothesis marketplaces.
-- Autonomous claims of causality.
+- Arbitrary generated code execution.
+- Autonomous intervention or machine control.
+- Medical or behavioral experimentation.
+- Thousands of automatic hypotheses.
+- Cloud isolation of holdout data.
+- Multi-user access control or external signing.
+- Scientific paper generation or autonomous causal claims.
 
-## Implementation Boundary
-
-Future implementation work must preserve the current local-only posture unless a
-later contract explicitly changes it. The first implementation should favor
-small storage helpers, explicit dataclasses, deterministic tests, read-only
-access for analysis partitions, and simple auditability over broad frameworks.
+Silence, rejection, failure, and inconclusive outcomes are expected valid results.

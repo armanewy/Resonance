@@ -84,6 +84,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         hours=args.hours,
         interval_seconds=args.interval_hours * 60 * 60,
         notification_config=config.notifications,
+        scanner_options=ScannerOptions(calendar_timezone=config.location.timezone),
         stop_requested=stop_requested,
         once=args.once,
     )

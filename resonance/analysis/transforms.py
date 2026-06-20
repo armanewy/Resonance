@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import numpy as np
 import pandas as pd
@@ -45,8 +46,14 @@ def calendar_residual(
     series: pd.Series,
     cadence_seconds: int | None = None,
     min_history: int = 3,
+    timezone_name: str = "UTC",
 ) -> pd.Series:
-    """Remove prior median behavior for matching UTC time-of-week slots."""
+    """Remove prior median behavior for matching local time-of-week slots.
+
+    The series remains UTC-indexed, but calendar slots are derived in the
+    configured location timezone so daylight and commute patterns are not
+    silently grouped by UTC clock time.
+    """
     if min_history < 1:
         raise ValueError("min_history must be at least 1")
 
@@ -55,7 +62,13 @@ def calendar_residual(
     if cadence <= 0:
         raise ValueError("cadence_seconds must be positive")
 
-    slots = _time_of_week_slots(values.index, cadence)
+    try:
+        local_timezone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(f"timezone is not recognized: {timezone_name}") from exc
+
+    local_index = values.index.tz_convert(local_timezone)
+    slots = _time_of_week_slots(local_index, cadence)
     residuals = pd.Series(np.nan, index=values.index, dtype=float, name=values.name)
     history: dict[int, list[float]] = {}
 

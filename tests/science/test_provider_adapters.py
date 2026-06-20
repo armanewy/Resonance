@@ -11,6 +11,7 @@ from resonance.science.discovery_brief import (
     DiscoveryBrief,
     discovery_brief_from_exploration_view,
 )
+from resonance.science.imagination import _provider_for_name
 from resonance.science.providers import CommandProvider, OpenAIProvider, ProviderError, run_provider
 from resonance.science.providers import openai_provider
 
@@ -40,9 +41,14 @@ def test_openai_provider_uses_responses_structured_outputs_without_tools() -> No
     assert "BLIND_SENTINEL_SHOULD_NOT_LEAK" not in sent_payload
     assert "SECRET_EVALUATOR_SENTINEL" not in sent_payload
     assert "cpu_percent" in sent_payload
+    user_payload = json.loads(request["input"][1]["content"])
+    assert user_payload["requested_seed"] == 99
+    assert user_payload["max_hypotheses"] == 1
     assert run.metadata.request_config["response_id"] == "resp_test"
     assert run.metadata.request_config["response_model"] == "gpt-test"
     assert run.metadata.request_config["response_metadata"]["usage"] == {"input_tokens": 10}
+    assert run.metadata.request_config["requested_seed"] == 99
+    assert run.metadata.request_config["deterministic_seed_applied"] is False
 
 
 def test_openai_provider_missing_optional_package_raises_provider_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -67,7 +73,10 @@ def test_command_provider_passes_discovery_brief_on_stdin_and_validates_stdout(
     def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append({"args": args, "kwargs": kwargs})
         assert args == (["provider-bin", "--json"],)
-        assert kwargs["input"] == _brief().canonical_json()
+        payload = json.loads(kwargs["input"])
+        assert payload["discovery_brief"] == json.loads(_brief().canonical_json())
+        assert payload["max_hypotheses"] == 1
+        assert payload["seed"] == 7
         assert kwargs["capture_output"] is True
         assert kwargs["check"] is False
         assert "shell" not in kwargs
@@ -88,6 +97,8 @@ def test_command_provider_passes_discovery_brief_on_stdin_and_validates_stdout(
     assert run.metadata.request_config["command"] == ["provider-bin", "--json"]
     assert run.metadata.request_config["returncode"] == 0
     assert run.metadata.request_config["stdout_bytes"] > 0
+    assert run.metadata.request_config["seed"] == 7
+    assert run.metadata.request_config["max_hypotheses"] == 1
 
 
 def test_command_provider_timeout_raises_provider_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -133,6 +144,52 @@ def test_command_provider_invalid_json_raises_provider_error(monkeypatch: pytest
 
     with pytest.raises(ProviderError, match="invalid JSON"):
         provider.propose(_brief(), max_hypotheses=1, seed=1)
+
+
+def test_imagination_provider_factory_exposes_openai_and_local_command_adapters() -> None:
+    manifest = {
+        "max_lag_seconds": 900,
+        "metric_catalog": {
+            "catalog_id": "a" * 64,
+            "metrics": [
+                {"name": "control"},
+                {"name": "x"},
+                {"name": "y"},
+            ],
+        },
+    }
+
+    openai = _provider_for_name(
+        "openai",
+        manifest=manifest,
+        provider_file=None,
+        provider_model="gpt-test",
+        provider_timeout_seconds=12.0,
+    )
+    command = _provider_for_name(
+        "command",
+        manifest=manifest,
+        provider_file=None,
+        provider_command=["provider-bin", "--json"],
+        provider_model="local-model",
+        provider_timeout_seconds=8.0,
+    )
+
+    assert isinstance(openai, OpenAIProvider)
+    assert openai.model == "gpt-test"
+    assert openai.timeout_seconds == 12.0
+    assert isinstance(command, CommandProvider)
+    assert command.command == ("provider-bin", "--json")
+    assert command.model == "local-model"
+
+
+def test_imagination_command_provider_requires_an_argument_vector() -> None:
+    with pytest.raises(ProviderError, match="provider-command"):
+        _provider_for_name(
+            "command",
+            manifest={"metric_catalog": {"metrics": []}},
+            provider_file=None,
+        )
 
 
 class _FakeResponses:

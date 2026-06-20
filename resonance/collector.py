@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import signal
+import threading
 import time
 
 from resonance.config import ConfigError, load_config
@@ -13,8 +15,11 @@ from resonance.weather import WeatherError, fetch_weather_measurements
 LOG = logging.getLogger("resonance.collector")
 
 
-def main() -> int:
+def main(stop_requested: threading.Event | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    stop_event = stop_requested or threading.Event()
+    if stop_requested is None:
+        _install_stop_handlers(stop_event)
     try:
         config = load_config()
     except ConfigError as exc:
@@ -28,7 +33,7 @@ def main() -> int:
     next_weather_at = 0.0
 
     try:
-        while True:
+        while not stop_event.is_set():
             monotonic_now = time.monotonic()
             if monotonic_now >= next_personal_at:
                 result = collect_personal_measurements(config.collection, previous_network_snapshot)
@@ -54,12 +59,23 @@ def main() -> int:
                     LOG.warning("weather_request_failed: %s", exc)
                 next_weather_at = monotonic_now + config.collection.weather_interval_seconds
 
-            time.sleep(0.5)
+            stop_event.wait(0.5)
     except KeyboardInterrupt:
-        LOG.info("Resonance collector stopping")
-        return 0
+        stop_event.set()
     finally:
+        LOG.info("Resonance collector stopping")
         conn.close()
+    return 0
+
+
+def _install_stop_handlers(stop_event: threading.Event) -> None:
+    def request_stop(_signum: int, _frame: object) -> None:
+        stop_event.set()
+
+    signal.signal(signal.SIGINT, request_stop)
+    signal.signal(signal.SIGTERM, request_stop)
+    if hasattr(signal, "SIGBREAK"):
+        signal.signal(signal.SIGBREAK, request_stop)
 
 
 if __name__ == "__main__":

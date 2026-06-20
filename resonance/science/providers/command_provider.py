@@ -3,8 +3,8 @@ from __future__ import annotations
 import subprocess
 from typing import Any, Sequence
 
-from resonance.science.contracts import HypothesisSpec
-from resonance.science.discovery_brief import DiscoveryBrief, serialize_discovery_brief
+from resonance.science.contracts import HypothesisSpec, canonical_json
+from resonance.science.discovery_brief import DiscoveryBrief
 from resonance.science.providers.base import ProviderError, validate_max_hypotheses
 from resonance.science.providers.openai_provider import _parse_proposals
 
@@ -55,10 +55,17 @@ class CommandProvider:
         seed: int,
     ) -> list[HypothesisSpec]:
         normalized_max = validate_max_hypotheses(max_hypotheses)
+        request_payload = canonical_json(
+            {
+                "discovery_brief": brief.model_dump(mode="json", exclude_none=True),
+                "max_hypotheses": normalized_max,
+                "seed": int(seed),
+            }
+        )
         try:
             completed = subprocess.run(
                 list(self.command),
-                input=serialize_discovery_brief(brief),
+                input=request_payload,
                 text=True,
                 encoding="utf-8",
                 capture_output=True,
@@ -80,6 +87,8 @@ class CommandProvider:
         stderr = completed.stderr.strip()
         self.request_config = {
             **self.request_config,
+            "seed": int(seed),
+            "max_hypotheses": normalized_max,
             "returncode": completed.returncode,
             "stderr_bytes": len(completed.stderr.encode("utf-8")),
             "stdout_bytes": len(stdout_bytes),

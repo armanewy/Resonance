@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import socket
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -15,6 +16,17 @@ from resonance.time_utils import utc_now
 
 
 PERSONAL_SOURCE = "personal"
+
+
+# Name resolution cannot be reliably interrupted through the stdlib on every
+# platform. Keep at most one outstanding lookup instead of creating a new
+# worker thread after every timeout and leaking blocked resolver calls.
+_DNS_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="resonance-dns",
+)
+_DNS_LOCK = threading.Lock()
+_DNS_PENDING: concurrent.futures.Future[object] | None = None
 
 
 @dataclass(frozen=True)
@@ -171,20 +183,31 @@ def measure_tcp_latency(host: str, port: int, timeout_seconds: float = 1.5) -> P
 
 
 def measure_dns_latency(hostname: str, timeout_seconds: float = 1.5) -> ProbeResult:
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    global _DNS_PENDING
+
+    if timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be positive")
+
+    with _DNS_LOCK:
+        if _DNS_PENDING is not None and not _DNS_PENDING.done():
+            return ProbeResult(False, None, "A previous DNS lookup is still running")
+        _DNS_PENDING = _DNS_EXECUTOR.submit(socket.getaddrinfo, hostname, None)
+        future = _DNS_PENDING
+
     started = time.perf_counter()
-    future = executor.submit(socket.getaddrinfo, hostname, None)
     try:
         future.result(timeout=timeout_seconds)
         latency_ms = (time.perf_counter() - started) * 1000
         return ProbeResult(True, latency_ms)
     except concurrent.futures.TimeoutError:
-        future.cancel()
         return ProbeResult(False, None, f"DNS lookup timed out after {timeout_seconds:.1f}s")
     except OSError as exc:
         return ProbeResult(False, None, f"{type(exc).__name__}: {exc}")
     finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+        if future.done():
+            with _DNS_LOCK:
+                if _DNS_PENDING is future:
+                    _DNS_PENDING = None
 
 
 def _network_snapshot(timestamp_utc: datetime) -> NetCountersSnapshot | None:

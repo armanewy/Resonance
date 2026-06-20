@@ -215,7 +215,7 @@ def _hypothesis(
             "maximum_lag_seconds": maximum_lag_seconds,
             "fitting_metric": "rmse",
             "tuning_metric": "rmse",
-            "blind_metrics": ["rmse", "mae"],
+            "blind_metrics": ["rmse", "mae", "spearman_r"],
             "minimum_blind_effect": 0.1,
             "minimum_baseline_improvement": 0.01,
             "negative_controls": [{"metric": "control", "rationale": "Control should not reproduce the effect."}],

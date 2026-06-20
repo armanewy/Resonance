@@ -224,6 +224,19 @@ class HypothesisSpec(StrictModel):
     def validate_scientific_contract(self, info: ValidationInfo) -> HypothesisSpec:
         if len(set(self.input_metrics)) != len(self.input_metrics):
             raise ValueError("input metrics must be unique")
+        if self.fitting_metric != MetricName.RMSE:
+            raise ValueError("observational_prediction v1 supports rmse fitting only")
+        if self.expected_direction != Direction.POSITIVE:
+            raise ValueError(
+                "observational_prediction v1 evaluates predictions against targets; "
+                "encode negative effects in the expression and use expected_direction='positive'"
+            )
+        if len(set(self.blind_metrics)) != len(self.blind_metrics):
+            raise ValueError("blind metrics must be unique")
+        if MetricName.SPEARMAN_R not in self.blind_metrics:
+            raise ValueError("blind metrics must include spearman_r")
+        if not ({MetricName.MAE, MetricName.RMSE} & set(self.blind_metrics)):
+            raise ValueError("blind metrics must include mae or rmse")
         if self.target_metric in self.input_metrics:
             raise ValueError("target metric cannot also be an input metric")
         source_metrics = expression_metrics(self.expression)
@@ -264,6 +277,9 @@ class HypothesisSpec(StrictModel):
                 "title",
                 "concise_claim",
                 "rationale",
+                "origin",
+                "parent_hypothesis_ids",
+                "random_seed",
             },
             exclude_none=True,
         )

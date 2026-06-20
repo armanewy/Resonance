@@ -11,7 +11,14 @@ from resonance.science.fitting import EVALUATOR_VERSION as FITTING_VERSION
 from resonance.science.fitting import fit_hypothesis
 from resonance.science.interpreter import frame_from_snapshot_rows
 from resonance.science.ledger import append_event, current_code_commit, read_entries
-from resonance.science.providers import FileProvider, MockProvider, ProviderError, run_provider
+from resonance.science.providers import (
+    CommandProvider,
+    FileProvider,
+    MockProvider,
+    OpenAIProvider,
+    ProviderError,
+    run_provider,
+)
 from resonance.science.review import (
     ReviewRecommendation,
     ReviewSpec,
@@ -40,6 +47,9 @@ def imagine_hypotheses(
     ledger_path: Path,
     seed: int = DEFAULT_IMAGINATION_SEED,
     provider_file: str | Path | None = None,
+    provider_command: Sequence[str] | None = None,
+    provider_model: str | None = None,
+    provider_timeout_seconds: float = 30.0,
     provider: Any | None = None,
 ) -> dict[str, Any]:
     manifest = load_snapshot_manifest(snapshot_id, artifact_root=artifact_root)
@@ -71,6 +81,9 @@ def imagine_hypotheses(
         provider_name,
         manifest=manifest,
         provider_file=provider_file,
+        provider_command=provider_command,
+        provider_model=provider_model,
+        provider_timeout_seconds=provider_timeout_seconds,
     )
     provider_run = run_provider(
         resolved_provider,
@@ -360,7 +373,10 @@ def fit_approved(
                 "candidate_id": proposal["candidate_id"],
                 "hypothesis": hypothesis.model_dump(mode="json", exclude_none=True),
                 "fitted_parameters": fit_result.fitted_parameters,
-                "fit_result": {"fit_result_id": fit_artifact["sha256"]},
+                "fit_result": {
+                    "fit_result_id": fit_artifact["sha256"],
+                    "target_transform_config": fit_result.target_transform_config,
+                },
             }
         )
         fit_summaries.append(
@@ -417,6 +433,9 @@ def _provider_for_name(
     *,
     manifest: Mapping[str, Any],
     provider_file: str | Path | None,
+    provider_command: Sequence[str] | None = None,
+    provider_model: str | None = None,
+    provider_timeout_seconds: float = 30.0,
 ) -> Any:
     if provider_name == "mock":
         return MockProvider([_default_mock_hypothesis(manifest)])
@@ -424,6 +443,19 @@ def _provider_for_name(
         if provider_file is None:
             raise ProviderError("--provider-file is required for --provider file")
         return FileProvider(provider_file)
+    if provider_name == "openai":
+        options: dict[str, Any] = {"timeout_seconds": provider_timeout_seconds}
+        if provider_model:
+            options["model"] = provider_model
+        return OpenAIProvider(**options)
+    if provider_name == "command":
+        if not provider_command:
+            raise ProviderError("--provider-command is required for --provider command")
+        return CommandProvider(
+            provider_command,
+            timeout_seconds=provider_timeout_seconds,
+            model=provider_model,
+        )
     raise ProviderError(f"unsupported provider: {provider_name}")
 
 

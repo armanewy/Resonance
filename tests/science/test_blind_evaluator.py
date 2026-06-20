@@ -17,7 +17,7 @@ from resonance.science.blind_evaluator import (
     evaluate_preregistration,
 )
 from resonance.science.contracts import HypothesisSpec
-from resonance.science.ledger import read_entries, verify_ledger
+from resonance.science.ledger import claim_blind_evaluation, read_entries, verify_ledger
 from resonance.science.preregistration import create_preregistration
 from resonance.science.snapshots import create_snapshot
 from resonance.storage import Measurement, init_db, insert_measurements
@@ -207,6 +207,58 @@ def test_failure_cannot_be_overwritten(tmp_path: Path) -> None:
     assert result.status == "fail"
     assert len([entry for entry in entries if entry["event_type"] == "blind_evaluation_completed"]) == 1
     assert entries[-1]["payload"]["status"] == "fail"
+
+
+def test_blind_baseline_is_recomputed_instead_of_trusting_tuning_provenance(tmp_path: Path) -> None:
+    first = _case(tmp_path / "first", "strong")
+    second = _case(tmp_path / "second", "strong")
+
+    expected = evaluate_preregistration(
+        first[0],
+        first[1],
+        artifact_root=first[2],
+        ledger_path=first[3],
+    )
+    misleading_provenance = replace(
+        second[0],
+        baseline_metrics={"mae": 9999.0, "rmse": 9999.0},
+    )
+    observed = evaluate_preregistration(
+        misleading_provenance,
+        misleading_provenance.preregistration_hash(),
+        artifact_root=second[2],
+        ledger_path=second[3],
+    )
+
+    assert observed.status == expected.status
+    assert observed.metrics["baseline_mae"] == pytest.approx(expected.metrics["baseline_mae"])
+    assert observed.metrics["baseline_rmse"] == pytest.approx(expected.metrics["baseline_rmse"])
+    assert observed.metrics["tuning_baseline_metrics_provenance"] == {
+        "mae": 9999.0,
+        "rmse": 9999.0,
+    }
+
+
+def test_started_blind_claim_is_terminal_even_without_a_completion_record(tmp_path: Path) -> None:
+    preregistration, preregistration_hash, artifact_root, ledger_path = _case(tmp_path, "strong")
+    claim_blind_evaluation(
+        preregistration_hash=preregistration_hash,
+        snapshot_id=preregistration.snapshot_id,
+        hypothesis_hash=preregistration.hypothesis_hash,
+        payload={"reason": "simulate evaluator crash after claiming budget"},
+        ledger_path=ledger_path,
+    )
+
+    with pytest.raises(BlindEvaluationAlreadyCompletedError):
+        evaluate_preregistration(
+            preregistration,
+            preregistration_hash,
+            artifact_root=artifact_root,
+            ledger_path=ledger_path,
+        )
+
+    entries = read_entries(ledger_path)
+    assert [entry["event_type"] for entry in entries] == ["blind_evaluation_started"]
 
 
 def _case(

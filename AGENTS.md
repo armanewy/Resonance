@@ -2,150 +2,83 @@
 
 ## Purpose
 
-Resonance is a compact, local-only Python prototype that collects personal computer/network signals plus localized Open-Meteo weather data, stores them in SQLite, and renders clear Streamlit/Plotly time-series graphs.
+Resonance is a local-first personal observatory and experimental science workbench. It has three deliberate layers:
 
-The completed MVP intentionally does not include correlation discovery, alerts, accounts, cloud deployment, a separate API server, an ORM, a JavaScript frontend, or infrastructure services.
+1. Collect personal computer/network signals and localized weather into SQLite and render them in Streamlit.
+2. Explore and conservatively promote lagged associations with holdout, stability, permutation, and multiple-testing checks.
+3. Run a sealed scientific loop: structured hypothesis imagination, restricted-program fitting/search, tuning, one-shot blind evaluation, manual controlled experiments, and tamper-evident scientific memory.
+
+The system is allowed to remain silent or return `fail`/`inconclusive`. Persuasive prose never overrides numerical evaluation.
 
 ## Repository Layout
 
-- `config.toml`: editable location and collection configuration.
-- `run_local.py`: local launcher for the collector and Streamlit dashboard.
-- `resonance/config.py`: config loading and validation.
-- `resonance/storage.py`: SQLite connection, schema setup, inserts, queries, and demo cleanup.
-- `resonance/personal.py`: CPU, memory, network delta, battery, TCP, and DNS sampling.
-- `resonance/weather.py`: Open-Meteo request and parser.
-- `resonance/collector.py`: long-running collector loop.
-- `resonance/dashboard.py`: compact Streamlit dashboard.
-- `resonance/seed_demo.py`: explicit synthetic demo-data seeder.
-- `tests/`: focused pytest tests and the Open-Meteo fixture.
-- `data/resonance.db`: local SQLite database created at runtime and ignored by Git.
+- `config.toml`: local location, collection, and optional notification settings.
+- `run_local.py`: starts the collector and localhost-only Streamlit dashboard.
+- `resonance/collector.py`, `personal.py`, `weather.py`: data collection.
+- `resonance/storage.py`: SQLite schema and storage helpers.
+- `resonance/dashboard.py`, `resonance/ui/`: visual exploration and evidence cards.
+- `resonance/analysis/`: alignment, transformations, lagged association, validation, scanning, and lifecycle.
+- `resonance/science/`: snapshots, DSL contracts/interpreter, shared evaluation, fitting, selection, program search, preregistration, blind evaluation, providers, ledger, and scientific CLI.
+- `resonance/science/experiments/`: low-risk, manually executed controlled experiments.
+- `tests/`: deterministic unit, integration, adversarial, and synthetic-science tests.
+- `data/resonance.db`: local runtime database; ignored by Git.
+- `data/science/`: local content-addressed artifacts and ledger; ignored by Git.
 
-## Commands
+## Common Commands
 
-Install dependencies:
-
-```powershell
+```bash
 python -m pip install -r requirements.txt
-```
-
-Run the full test suite:
-
-```powershell
-pytest
-```
-
-Run the collector:
-
-```powershell
-python -m resonance.collector
-```
-
-Run the dashboard only, bound to localhost:
-
-```powershell
-streamlit run resonance/dashboard.py --server.address=127.0.0.1
-```
-
-Run collector and dashboard together:
-
-```powershell
+pytest -q
 python run_local.py
-```
-
-Seed demo data explicitly:
-
-```powershell
-python -m resonance.seed_demo
-```
-
-Remove demo data:
-
-```powershell
-python -m resonance.seed_demo --clear
-```
-
-Run the data audit:
-
-```powershell
 python -m resonance.audit --hours 24
+python -m resonance.analyze_pair --x tcp_latency_ms --y cpu_percent --hours 24 --transform first_difference --max-lag-minutes 60
+python -m resonance.scan --hours 168 --dry-run
+python -m resonance.watch
+python -m resonance.science.ledger_cli verify
 ```
 
-Generate a synthetic scenario:
+Use `python -m resonance.science.cli --help`, `python -m resonance.science.search_cli --help`, and `python -m resonance.science.experiments.cli --help` for the scientific workflows.
 
-```powershell
-python -m resonance.synthetic --scenario strong_lag --output tmp\strong_lag.csv
-```
+## Coding Rules
 
-Current passing baseline command:
+- Support Python 3.11 or newer.
+- Preserve local-only behavior unless a task explicitly changes it.
+- Use UTC for storage and configured local time only for display/calendar semantics.
+- Never forward-fill missing observations implicitly.
+- Use parameterized SQL.
+- Keep external requests explicit, bounded by timeouts, and recoverable.
+- Avoid broad refactors, speculative abstractions, and infrastructure services.
+- Add focused deterministic tests for every behavioral change.
+- Run targeted tests plus the complete suite before committing.
+- Do not fabricate unavailable measurements or statistical certainty.
 
-```powershell
-pytest
-```
+## Statistical Integrity
 
-## Storage
+- Association discovery uses the same statistic in discovery and validation.
+- A lag selected on discovery data is frozen before holdout evaluation.
+- A permutation null must repeat the full lag search.
+- Automatic scans correct across the whole tested family and may return no findings.
+- Calendar residuals use the configured location timezone.
+- Findings say `associated`, `precedes`, `follows`, or `predicts in this dataset`; never `causes` without intervention.
 
-The local SQLite database path is:
+## Sealed Scientific-Loop Invariants
 
-```text
-data/resonance.db
-```
+Follow `docs/scientific_loop.md`.
 
-Runtime data is local-only and ignored by Git. Keep database access in small storage helpers. Use UTC timestamps for storage and convert to local time only for display.
+- The proposer receives exploration-only summaries, never tuning or blind observations.
+- LLM output is validated structured data; arbitrary generated Python/shell code is never executed.
+- Hypotheses compile to the restricted expression DSL.
+- Fitting uses exploration only; candidate selection/program search may use tuning; neither may access blind data.
+- Preregistration freezes the exact expression, fitted parameters, transform semantics, baseline strategy, metrics, controls, thresholds, split, evaluator identity, and seed.
+- The blind budget is atomically consumed before blind data is loaded.
+- One blind evaluation is allowed per snapshot+hypothesis scientific object. A retry needs a future snapshot.
+- Fitting, tuning, and blind evaluation must use the shared program/target-transform semantics in `resonance/science/evaluation.py`.
+- Baselines are recomputed on the evaluated partition; tuning baseline values are provenance, not blind scores.
+- Negative, rejected, failed, inconclusive, aborted, and superseded results remain in the ledger.
+- Every random process records a seed.
+- Every result identifies snapshot, code/evaluator identity, hypothesis, and artifact hashes.
+- The local ledger is tamper-evident, not immutable against the machine owner.
 
-## Coding Conventions
+## Safety and Scope
 
-- Use Python 3.11 or newer and the existing dependencies in `requirements.txt`.
-- Prefer the standard library where practical.
-- Keep modules small and easy to delete or rewrite.
-- Use dataclasses for lightweight typed records when useful.
-- Use parameterized SQL only.
-- Keep tests focused and deterministic.
-- Do not fabricate unavailable metrics.
-- Record recoverable collector errors and continue running.
-- Avoid logging every successful sample.
-
-## Scope Rules
-
-- Assigned tasks may modify only their declared files unless compilation or tests require a minimal adjacent change.
-- Do not perform broad refactoring.
-- Do not add correlation features unless the prompt explicitly assigns that work.
-- Do not add a new server, cloud deployment, account system, ORM, frontend framework, Docker setup, queue, cache, scheduler service, or infrastructure service.
-- Do not introduce AI or LLM functionality.
-- Do not add speculative architecture or abstractions for hypothetical sources.
-- Existing behavior must remain backward compatible unless the prompt explicitly says otherwise.
-- Every task must add focused tests, run targeted tests where relevant, run the full suite, make one atomic commit, and stop.
-- Every task must report files changed, commands run, test results, and commit hash.
-
-## Scientific Integrity Rules
-
-When working on the sealed scientific loop, follow `docs/scientific_loop.md`.
-These rules are architecture constraints, not optional UI copy:
-
-- The LLM never sees blind observations.
-- No arbitrary Python generated by an LLM is executed.
-- Hypotheses compile to a restricted expression DSL.
-- Program search may use exploration and tuning data only; it may not query the blind evaluator.
-- One blind evaluation is allowed per preregistered hypothesis.
-- Repeating a blind evaluation requires a new future-data snapshot.
-- Natural-language explanations never override numerical results.
-- Negative and inconclusive results are retained.
-- Use "associated with" or "predicts in this dataset" for non-interventional results.
-- Do not use "causes" unless supported by an intervention.
-- Any random process must have a stored seed.
-- Every result must identify data snapshot, code commit, evaluator version, hypothesis hash, and artifact hashes.
-
-The chronological scientific split is exploration for the first 50% of eligible
-observations, tuning for the next 25%, and blind for the final 25%, with an
-embargo gap around boundaries at least as large as the maximum searched lag.
-
-The scientific ledger is append-only through the application interface.
-Corrections create new records rather than modifying old records. The first
-local ledger is tamper-evident, not literally immutable against a machine owner
-intentionally rewriting the repository.
-
-Initial scientific-loop scope excludes automatic hardware interventions,
-medical or behavioral experimentation, arbitrary generated code, general causal
-discovery, scientific paper generation, thousands of automatically proposed
-hypotheses, cloud orchestration, multi-user collaboration, public hypothesis
-marketplaces, and autonomous claims of causality.
-
+Initial controlled experiments are human-executed, low-risk, and reversible. Do not automate medical/behavioral interventions, hazardous hardware actions, emergency-connectivity changes, or consequential machine control. Do not add cloud orchestration, accounts, multi-user collaboration, public marketplaces, or autonomous causal claims without a new explicit contract.

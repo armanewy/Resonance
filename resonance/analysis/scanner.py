@@ -42,6 +42,7 @@ DEFAULT_MIN_OVERLAP = 30
 DEFAULT_WINDOW_COUNT = 4
 DEFAULT_PERMUTATIONS = 199
 DEFAULT_PERMUTATION_SEED = 20260619
+DEFAULT_MULTIPLE_TESTING_METHOD = "by"
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,8 @@ class ScannerOptions:
     permutation_block_size: int | None = None
     permutation_seed: int = DEFAULT_PERMUTATION_SEED
     calendar_min_history: int = 3
+    calendar_timezone: str = "UTC"
+    multiple_testing_method: str = DEFAULT_MULTIPLE_TESTING_METHOD
 
 
 @dataclass(frozen=True)
@@ -127,9 +130,11 @@ def scan_correlations(
     if not evidence:
         return ()
 
-    q_values = _benjamini_hochberg(
+    total_tests = max(len(selection.pairs), len(evidence) + skipped_tests)
+    q_values = _adjust_p_values(
         [item.p_value for item in evidence],
-        total_tests=len(evidence) + skipped_tests,
+        total_tests=total_tests,
+        method=resolved_options.multiple_testing_method,
     )
     corrected = [
         PairEvidence(
@@ -159,7 +164,13 @@ def scan_correlations(
     )
 
     findings = tuple(
-        _finding_from_evidence(item, first_seen_utc=end_utc, verified_utc=end_utc)
+        _finding_from_evidence(
+            item,
+            first_seen_utc=end_utc,
+            verified_utc=end_utc,
+            options=resolved_options,
+            total_tests=total_tests,
+        )
         for item in promoted[: resolved_options.max_findings]
     )
     if findings and not dry_run:
@@ -226,6 +237,14 @@ def _validate_options(options: ScannerOptions) -> None:
         raise ValueError("permutation_block_size must be positive")
     if options.calendar_min_history < 1:
         raise ValueError("calendar_min_history must be at least 1")
+    if options.multiple_testing_method not in {"bh", "by"}:
+        raise ValueError("multiple_testing_method must be 'bh' or 'by'")
+    try:
+        from zoneinfo import ZoneInfo
+
+        ZoneInfo(options.calendar_timezone)
+    except Exception as exc:
+        raise ValueError(f"calendar_timezone is not recognized: {options.calendar_timezone}") from exc
 
 
 def _evaluate_pair(
@@ -366,6 +385,7 @@ def _preferred_transformed_pair(
                 "calendar_residual",
                 min_points=options.min_aligned_observations,
                 calendar_min_history=options.calendar_min_history,
+                calendar_timezone=options.calendar_timezone,
             ),
             "calendar_residual",
         )
@@ -376,6 +396,7 @@ def _preferred_transformed_pair(
                 "first_difference",
                 min_points=options.min_aligned_observations,
                 calendar_min_history=options.calendar_min_history,
+                calendar_timezone=options.calendar_timezone,
             ),
             "first_difference",
         )
@@ -387,11 +408,13 @@ def _transform_aligned_pair(
     *,
     min_points: int,
     calendar_min_history: int,
+    calendar_timezone: str,
 ) -> AlignedPair:
     transform_kwargs: dict[str, Any] = {}
     if transform_name == "calendar_residual":
         transform_kwargs["cadence_seconds"] = pair.cadence_seconds
         transform_kwargs["min_history"] = calendar_min_history
+        transform_kwargs["timezone_name"] = calendar_timezone
 
     transformed_frame = pd.concat(
         (
@@ -435,9 +458,21 @@ def _score_for_lag(scores: Sequence[Mapping[str, Any]], lag_steps: int) -> Mappi
     return None
 
 
-def _benjamini_hochberg(p_values: Sequence[float | None], *, total_tests: int) -> tuple[float, ...]:
+def _adjust_p_values(
+    p_values: Sequence[float | None],
+    *,
+    total_tests: int,
+    method: str = DEFAULT_MULTIPLE_TESTING_METHOD,
+) -> tuple[float, ...]:
+    """Adjust p-values with BH or the more conservative BY procedure.
+
+    BY multiplies the BH correction by the harmonic sum of all tested
+    hypotheses, which controls false discoveries under arbitrary dependence.
+    """
     if total_tests <= 0:
         return ()
+    if method not in {"bh", "by"}:
+        raise ValueError("method must be 'bh' or 'by'")
     padded = [
         (1.0 if p_value is None else min(1.0, max(0.0, float(p_value))), index)
         for index, p_value in enumerate(p_values)
@@ -446,8 +481,16 @@ def _benjamini_hochberg(p_values: Sequence[float | None], *, total_tests: int) -
     ordered = sorted(padded, key=lambda item: item[0])
     q_values = [1.0] * len(padded)
     running_min = 1.0
+    dependency_factor = (
+        sum(1.0 / index for index in range(1, total_tests + 1))
+        if method == "by"
+        else 1.0
+    )
     for rank, (p_value, original_index) in reversed(list(enumerate(ordered, start=1))):
-        running_min = min(running_min, p_value * total_tests / rank)
+        running_min = min(
+            running_min,
+            p_value * total_tests * dependency_factor / rank,
+        )
         q_values[original_index] = min(1.0, running_min)
     return tuple(q_values[: len(p_values)])
 
@@ -474,6 +517,8 @@ def _finding_from_evidence(
     *,
     first_seen_utc: datetime,
     verified_utc: datetime,
+    options: ScannerOptions,
+    total_tests: int,
 ) -> CorrelationFinding:
     validation = evidence.validation_result
     aligned = evidence.aligned_pair
@@ -501,8 +546,13 @@ def _finding_from_evidence(
             "permutation_p_value": _clean_optional_number(evidence.p_value),
             "window_scores": _json_safe(validation.window_scores),
             "warnings": list(validation.warnings),
-            "selected_on": "first_70_percent",
-            "validated_on": "last_30_percent",
+            "selected_on": f"first_{round(options.discovery_fraction * 100)}_percent",
+            "validated_on": f"last_{round((1 - options.discovery_fraction) * 100)}_percent",
+            "calendar_timezone": options.calendar_timezone,
+            "multiple_testing": {
+                "method": options.multiple_testing_method,
+                "total_tests": total_tests,
+            },
             "association_only": True,
         },
     )

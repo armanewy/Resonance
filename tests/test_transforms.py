@@ -67,3 +67,26 @@ def test_calendar_residual_requires_enough_history() -> None:
 
     with pytest.raises(ValueError, match="insufficient history"):
         calendar_residual(series, cadence_seconds=3600, min_history=2)
+
+
+def test_calendar_residual_groups_equivalent_local_slots_across_dst_offsets() -> None:
+    series = pd.Series(
+        [10.0, 12.0, 15.0],
+        index=pd.DatetimeIndex(
+            [
+                "2026-01-05T13:00:00Z",  # Monday 08:00 EST
+                "2026-01-12T13:00:00Z",  # Monday 08:00 EST
+                "2026-06-01T12:00:00Z",  # Monday 08:00 EDT
+            ]
+        ),
+    )
+
+    residual = calendar_residual(
+        series,
+        cadence_seconds=3600,
+        min_history=2,
+        timezone_name="America/New_York",
+    )
+
+    assert residual.iloc[:2].isna().all()
+    assert residual.iloc[2] == pytest.approx(4.0)

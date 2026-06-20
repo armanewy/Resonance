@@ -86,7 +86,13 @@ def test_single_shared_outlier_is_window_unstable() -> None:
 
     assert stability.sign_stability is not None
     assert stability.sign_stability <= 0.5
-    assert max(score["rho"] for score in stability.window_scores if score["rho"] is not None) > 0.95
+    # Spearman correlation is intentionally robust to the single extreme
+    # point, so no window should look convincingly associated.
+    assert max(
+        abs(score["rho"])
+        for score in stability.window_scores
+        if score["rho"] is not None
+    ) < 0.3
     assert min(abs(score["rho"]) for score in stability.window_scores if score["rho"] is not None) < 0.05
 
 

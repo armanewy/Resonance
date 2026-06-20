@@ -20,6 +20,9 @@ Hard constraints for every `HypothesisSpec`:
 - Use negative controls that are not the target metric and are not a disguised copy of the target.
 - Keep each hypothesis simple enough to fit within the stated complexity budget.
 - Make the hypotheses structurally different from each other, not just renamed copies or parameter tweaks.
+- Set `fitting_metric` to `rmse`; that is the only fitting objective implemented by the current evaluator.
+- Set `expected_direction` to `positive`. Encode a negative input effect inside the expression rather than asking for a negative prediction-to-target direction.
+- Include `spearman_r` and at least one of `mae` or `rmse` in `blind_metrics`.
 
 Scientific discipline:
 - Treat all results as observational associations. Do not use causal language such as "causes", "drives", "impacts", "leads to", or "because" when describing observational results.

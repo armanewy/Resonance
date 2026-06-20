@@ -12,10 +12,12 @@ from resonance.science.snapshots import (
     BlindEvaluatorCapability,
     EmptySnapshotError,
     InsufficientSnapshotDataError,
+    SnapshotError,
     create_blind_evaluator_capability,
     create_snapshot,
     load_blind_view,
     load_exploration_view,
+    load_snapshot_manifest,
     snapshot_summary,
     verify_snapshot_artifacts,
 )
@@ -229,6 +231,28 @@ def test_empty_and_insufficient_data_fail_closed(tmp_path: Path) -> None:
             max_lag_seconds=0,
             artifact_root=tmp_path / "artifacts-empty",
         )
+
+
+def test_snapshot_identifiers_and_artifact_paths_cannot_escape_root(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "artifacts"
+    with pytest.raises(SnapshotError, match="64-character"):
+        load_snapshot_manifest("../outside", artifact_root=artifact_root)
+
+    db_path = _create_db(tmp_path / "db", _measurements(8))
+    manifest = create_snapshot(
+        db_path=db_path,
+        hours=24,
+        metrics=["cpu_percent"],
+        max_lag_seconds=0,
+        artifact_root=artifact_root,
+    )
+    index_path = artifact_root / "snapshots" / f"{manifest['snapshot_id']}.json"
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    index["manifest"]["path"] = "../../outside.json"
+    index_path.write_text(json.dumps(index), encoding="utf-8")
+
+    with pytest.raises(SnapshotError, match="escapes artifact root"):
+        load_snapshot_manifest(manifest["snapshot_id"], artifact_root=artifact_root)
 
     small_db = _create_db(tmp_path / "small", _measurements(3))
     with pytest.raises(InsufficientSnapshotDataError):

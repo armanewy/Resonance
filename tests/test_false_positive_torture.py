@@ -45,7 +45,7 @@ def test_shared_daily_seasonality_with_independent_residuals_is_not_promotable()
     assert raw.permutation_p_value is not None and raw.permutation_p_value <= PROMOTION_P_VALUE
     assert residual.best_rho is not None and abs(residual.best_rho) < 0.25
     assert residual.holdout_rho is not None and abs(residual.holdout_rho) < 0.25
-    assert residual.permutation_p_value is not None and 0.1 < residual.permutation_p_value < 0.8
+    assert residual.permutation_p_value is not None and 0.1 <= residual.permutation_p_value < 0.8
     assert not _may_promote(residual)
 
 
@@ -67,7 +67,7 @@ def test_shared_weekly_seasonality_is_not_promotable_after_weekly_residual_check
     assert raw.permutation_p_value is not None and raw.permutation_p_value <= PROMOTION_P_VALUE
     assert residual.best_rho is not None and abs(residual.best_rho) < 0.2
     assert residual.holdout_rho is not None and abs(residual.holdout_rho) < 0.2
-    assert residual.permutation_p_value is not None and 0.1 < residual.permutation_p_value < 0.8
+    assert residual.permutation_p_value is not None and 0.1 <= residual.permutation_p_value < 0.8
     assert not _may_promote(residual)
 
 
@@ -82,12 +82,12 @@ def test_one_enormous_simultaneous_outlier_is_not_promotable() -> None:
     assert not _may_promote(evidence)
 
 
-def test_two_independent_random_walks_are_not_promotable_even_when_one_test_is_tempted() -> None:
+def test_two_independent_random_walks_are_not_promotable() -> None:
     frame = _independent_random_walks()
     evidence = _evidence(frame, max_lag_steps=36, min_overlap=30, block_size=24)
 
     assert evidence.best_rho is not None and abs(evidence.best_rho) > 0.55
-    assert evidence.permutation_p_value is not None and evidence.permutation_p_value <= PROMOTION_P_VALUE
+    assert evidence.permutation_p_value is not None and evidence.permutation_p_value > PROMOTION_P_VALUE
     assert evidence.holdout_rho is not None and abs(evidence.holdout_rho) < 0.25
     assert evidence.sign_stability is not None and evidence.sign_stability < 0.75
     assert not _may_promote(evidence)

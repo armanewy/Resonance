@@ -132,6 +132,35 @@ def test_changing_only_presentation_formatting_does_not_change_hash() -> None:
     assert HypothesisSpec.model_validate(changed).hypothesis_hash() == original.hypothesis_hash()
 
 
+def test_proposal_provenance_does_not_change_scientific_hash() -> None:
+    original = HypothesisSpec.model_validate(_valid_hypothesis())
+    changed = _valid_hypothesis()
+    changed["origin"] = "mutation"
+    changed["parent_hypothesis_ids"] = ["parent-a", "parent-b"]
+    changed["random_seed"] = 42
+
+    assert HypothesisSpec.model_validate(changed).hypothesis_hash() == original.hypothesis_hash()
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("fitting_metric", "mae", "rmse fitting only"),
+        ("expected_direction", "negative", "encode negative effects"),
+    ],
+)
+def test_v1_rejects_contract_fields_the_evaluator_does_not_support(
+    field: str,
+    value: str,
+    message: str,
+) -> None:
+    payload = _valid_hypothesis()
+    payload[field] = value
+
+    with pytest.raises(ValidationError, match=message):
+        HypothesisSpec.model_validate(payload)
+
+
 def test_checked_in_json_schema_matches_model_schema() -> None:
     schema_path = Path(__file__).parents[2] / "resonance" / "science" / "hypothesis_schema.json"
     checked_in = json.loads(schema_path.read_text(encoding="utf-8"))

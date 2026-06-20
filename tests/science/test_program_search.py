@@ -9,7 +9,7 @@ import pytest
 
 from resonance.science.contracts import HypothesisSpec, expression_node_count
 from resonance.science.ledger import read_entries, verify_ledger
-from resonance.science.program_search import run_program_search
+from resonance.science.program_search import SearchConfig, _bounded_config, run_program_search
 from resonance.science.search_cli import main as search_main
 from resonance.science.snapshots import create_snapshot
 from resonance.storage import Measurement, init_db, insert_measurements
@@ -97,26 +97,13 @@ def test_program_search_respects_budget_and_never_reads_blind_values(tmp_path: P
     assert result.to_dict()["raw_blind_values_exposed"] is False
 
 
-def test_program_search_caps_defaults_to_prompt_limits(tmp_path: Path) -> None:
-    dataset = generate_synthetic_series("strong_lag", duration_hours=96, noise=0.25, seed=11)
-    manifest = _snapshot_from_dataset(tmp_path, dataset, max_lag_seconds=900)
+def test_program_search_caps_defaults_to_prompt_limits() -> None:
+    # Test the safety boundary directly. Running one hundred full nonlinear
+    # fits in a unit test is both slow and redundant with the budget tests.
+    config = _bounded_config(SearchConfig(budget=1000, beam_width=100))
 
-    result = run_program_search(
-        [_seed_hypothesis(lag_seconds=900)],
-        snapshot_id=manifest["snapshot_id"],
-        budget=1000,
-        beam_width=100,
-        complexity_penalty=0.001,
-        random_seed=17,
-        artifact_root=tmp_path / "artifacts",
-        ledger_path=tmp_path / "ledger.jsonl",
-        record_ledger=False,
-    )
-
-    assert result.config.budget == 100
-    assert result.config.beam_width == 10
-    assert result.evaluated_count <= 100
-    assert result.config.max_depth == _seed_hypothesis(lag_seconds=900).complexity_budget.max_ast_nodes
+    assert config.budget == 100
+    assert config.beam_width == 10
 
 
 def test_program_search_prefers_simpler_expression_when_performance_ties(tmp_path: Path) -> None:

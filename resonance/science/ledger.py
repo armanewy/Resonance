@@ -34,6 +34,7 @@ SUPPORTED_EVENT_TYPES = frozenset(
         "fit_completed",
         "program_search_completed",
         "hypothesis_preregistered",
+        "blind_evaluation_started",
         "blind_evaluation_completed",
         "result_interpreted",
         "hypothesis_superseded",
@@ -97,6 +98,64 @@ def append_event(
         _append_canonical_line(path, entry)
         return entry
 
+
+
+def claim_blind_evaluation(
+    *,
+    preregistration_hash: str,
+    snapshot_id: str,
+    hypothesis_hash: str,
+    payload: Mapping[str, Any],
+    code_commit: str | None = None,
+    ledger_path: str | Path = DEFAULT_LEDGER_PATH,
+    timestamp_utc: datetime | str | None = None,
+) -> dict[str, Any]:
+    """Atomically consume the one-shot blind budget before blind data is loaded.
+
+    A started claim is intentionally terminal even if the process crashes. That
+    fail-closed behavior prevents an interrupted evaluation from becoming a
+    reusable holdout query.
+    """
+
+    normalized_payload = _normalize_mapping(payload, "payload")
+    normalized_payload.update(
+        {
+            "preregistration_hash": preregistration_hash,
+            "dataset_snapshot_id": snapshot_id,
+            "hypothesis_hash": hypothesis_hash,
+        }
+    )
+    _canonical_json(normalized_payload)
+    path = Path(ledger_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _FileLock(path):
+        verification = verify_ledger(path)
+        if not verification.valid:
+            raise LedgerError(f"Cannot claim blind evaluation on invalid ledger: {'; '.join(verification.errors)}")
+        entries = _load_entries(path)
+        for entry in entries:
+            if entry["event_type"] not in {"blind_evaluation_started", "blind_evaluation_completed"}:
+                continue
+            existing = entry["payload"]
+            same_preregistration = existing.get("preregistration_hash") == preregistration_hash
+            same_scientific_object = (
+                existing.get("dataset_snapshot_id") == snapshot_id
+                and existing.get("hypothesis_hash") == hypothesis_hash
+            )
+            if same_preregistration or same_scientific_object:
+                raise LedgerError("blind evaluation budget has already been consumed")
+        previous_hash = entries[-1]["entry_hash"] if entries else GENESIS_PREVIOUS_HASH
+        entry = _build_entry(
+            sequence_number=len(entries) + 1,
+            timestamp_utc=_normalize_timestamp(timestamp_utc),
+            event_type="blind_evaluation_started",
+            payload=normalized_payload,
+            artifact_hashes={},
+            code_commit=code_commit or current_code_commit(),
+            previous_entry_hash=previous_hash,
+        )
+        _append_canonical_line(path, entry)
+        return entry
 
 def verify_ledger(ledger_path: str | Path = DEFAULT_LEDGER_PATH) -> LedgerVerification:
     """Verify hashes, sequencing, links, canonical JSON, and complete lines."""
@@ -202,7 +261,11 @@ def verify_ledger_artifacts(
                 if base_root is None:
                     errors.append(f"entry {sequence_number} {label}: relative path has no artifact root")
                     continue
-                path = base_root / path
+                root = base_root.resolve()
+                path = (root / path).resolve()
+                if path != root and root not in path.parents:
+                    errors.append(f"entry {sequence_number} {label}: artifact path escapes artifact root")
+                    continue
             if not path.exists():
                 errors.append(f"entry {sequence_number} {label}: missing artifact {path}")
                 continue
@@ -333,9 +396,12 @@ def _append_canonical_line(path: Path, entry: Mapping[str, Any]) -> None:
         flags |= os.O_BINARY
     fd = os.open(path, flags, 0o600)
     try:
-        written = os.write(fd, line)
-        if written != len(line):
-            raise LedgerError("Append wrote only part of the ledger line")
+        offset = 0
+        while offset < len(line):
+            written = os.write(fd, line[offset:])
+            if written <= 0:
+                raise LedgerError("append failed before the complete ledger line was written")
+            offset += written
         os.fsync(fd)
     finally:
         os.close(fd)

@@ -174,7 +174,10 @@ def snapshot_summary(
     artifact_root: str | Path = DEFAULT_ARTIFACT_ROOT,
 ) -> dict[str, Any]:
     manifest = load_snapshot_manifest(snapshot_id, artifact_root=artifact_root)
-    blind_artifact_path = Path(artifact_root) / manifest["artifacts"]["blind"]["path"]
+    blind_artifact_path = _resolve_artifact_path(
+        Path(artifact_root),
+        manifest["artifacts"]["blind"]["path"],
+    )
     return {
         "snapshot_id": manifest["snapshot_id"],
         "git_commit": manifest["git_commit"],
@@ -199,7 +202,7 @@ def verify_snapshot_artifacts(
     root = Path(artifact_root)
     errors: list[str] = []
     for name, artifact in manifest["artifacts"].items():
-        path = root / artifact["path"]
+        path = _resolve_artifact_path(root, artifact["path"])
         if not path.exists():
             errors.append(f"{name}: missing artifact {path}")
             continue
@@ -521,6 +524,9 @@ def _store_artifact(root: Path, digest: str, extension: str, content: bytes) -> 
 
 
 def _artifact_path(root: Path, digest: str, extension: str) -> Path:
+    _validate_hash(digest, "artifact digest")
+    if not extension or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789._-" for character in extension.lower()):
+        raise SnapshotError("invalid artifact extension")
     return root / "sha256" / digest[:2] / f"{digest}.{extension}"
 
 
@@ -529,6 +535,7 @@ def _relative_artifact_path(digest: str, extension: str) -> str:
 
 
 def _snapshot_index_path(root: Path, snapshot_id: str) -> Path:
+    _validate_hash(snapshot_id, "snapshot id")
     return root / "snapshots" / f"{snapshot_id}.json"
 
 
@@ -544,24 +551,58 @@ def _write_snapshot_index(root: Path, snapshot_id: str, manifest_ref: dict[str, 
 
 
 def _load_manifest(snapshot_id: str, root: Path) -> dict[str, Any]:
+    _validate_hash(snapshot_id, "snapshot id")
     index_path = _snapshot_index_path(root, snapshot_id)
     if not index_path.exists():
         raise FileNotFoundError(f"snapshot index not found: {snapshot_id}")
-    index = json.loads(index_path.read_text(encoding="utf-8"))
-    manifest_ref = index["manifest"]
-    manifest_path = root / manifest_ref["path"]
+    try:
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise SnapshotError(f"invalid snapshot index for {snapshot_id}: {exc}") from exc
+    if index.get("snapshot_id") != snapshot_id:
+        raise SnapshotError("snapshot index identity does not match requested snapshot")
+    manifest_ref = index.get("manifest")
+    if not isinstance(manifest_ref, dict):
+        raise SnapshotError("snapshot index lacks a manifest reference")
+    _validate_hash(str(manifest_ref.get("sha256", "")), "manifest digest")
+    manifest_path = _resolve_artifact_path(root, str(manifest_ref.get("path", "")))
     content = manifest_path.read_bytes()
     if _sha256(content) != manifest_ref["sha256"]:
         raise SnapshotError(f"manifest hash mismatch for snapshot {snapshot_id}")
-    return json.loads(content.decode("utf-8"))
+    try:
+        manifest = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SnapshotError(f"invalid manifest for snapshot {snapshot_id}: {exc}") from exc
+    if manifest.get("snapshot_id") != snapshot_id:
+        raise SnapshotError("manifest identity does not match requested snapshot")
+    return manifest
 
 
 def _read_json_gz_artifact(root: Path, artifact: dict[str, str]) -> dict[str, Any]:
-    path = root / artifact["path"]
+    _validate_hash(str(artifact.get("sha256", "")), "artifact digest")
+    path = _resolve_artifact_path(root, str(artifact.get("path", "")))
     content = path.read_bytes()
     if _sha256(content) != artifact["sha256"]:
         raise SnapshotError(f"artifact hash mismatch for {path}")
-    return json.loads(gzip.decompress(content).decode("utf-8"))
+    try:
+        return json.loads(gzip.decompress(content).decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SnapshotError(f"invalid compressed artifact {path}: {exc}") from exc
+
+
+def _resolve_artifact_path(root: Path, relative_path: str) -> Path:
+    if not relative_path:
+        raise SnapshotError("artifact path is empty")
+    resolved_root = root.resolve()
+    path = (resolved_root / relative_path).resolve()
+    if path != resolved_root and resolved_root not in path.parents:
+        raise SnapshotError("artifact path escapes artifact root")
+    return path
+
+
+def _validate_hash(value: str, label: str) -> None:
+    if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+        raise SnapshotError(f"{label} must be a 64-character lowercase hex digest")
 
 
 def _canonical_gzip_json(payload: dict[str, Any]) -> bytes:

@@ -163,8 +163,19 @@ def _parser() -> argparse.ArgumentParser:
 
     imagine = subparsers.add_parser("imagine", help="propose and review hypotheses from exploration only")
     imagine.add_argument("--snapshot", required=True, dest="snapshot_id")
-    imagine.add_argument("--provider", required=True, choices=("mock", "file"))
+    imagine.add_argument(
+        "--provider",
+        required=True,
+        choices=("mock", "file", "openai", "command"),
+    )
     imagine.add_argument("--provider-file", help="JSON proposal file for --provider file")
+    imagine.add_argument(
+        "--provider-command",
+        nargs="+",
+        help="argument vector for --provider command; no shell is used",
+    )
+    imagine.add_argument("--provider-model", help="optional provider model identifier")
+    imagine.add_argument("--provider-timeout-seconds", type=float, default=30.0)
     imagine.add_argument("--max-hypotheses", type=int, default=8)
     imagine.add_argument("--seed", type=int, default=DEFAULT_IMAGINATION_SEED)
 
@@ -318,7 +329,10 @@ def _dispatch(args: argparse.Namespace) -> dict[str, Any] | None:
             "candidate_id": fit_record["candidate_id"],
             "hypothesis": fit_record["hypothesis"],
             "fitted_parameters": fit_record["fit_result"]["fitted_parameters"],
-            "fit_result": {"fit_result_id": args.run_id},
+            "fit_result": {
+                "fit_result_id": args.run_id,
+                "target_transform_config": fit_record["fit_result"].get("target_transform_config", {}),
+            },
         }
         selection = select_candidate(
             fit_record["snapshot_id"],
@@ -357,6 +371,9 @@ def _dispatch(args: argparse.Namespace) -> dict[str, Any] | None:
             max_hypotheses=args.max_hypotheses,
             seed=args.seed,
             provider_file=args.provider_file,
+            provider_command=args.provider_command,
+            provider_model=args.provider_model,
+            provider_timeout_seconds=args.provider_timeout_seconds,
             artifact_root=artifact_root,
             ledger_path=ledger_path,
         )
@@ -454,17 +471,22 @@ def _preregister_candidate(
     fit_artifact = fit_entry["payload"]["artifacts"]["fit_result"]
     fit_record = _load_artifact_by_hash(artifact_root, fit_artifact["sha256"], "manual_fit_result")
     manifest = load_snapshot_manifest(fit_record["snapshot_id"], artifact_root=artifact_root)
-    baseline_metrics = _baseline_metrics_for_preregistration(candidate_id, ledger_path)
+    baseline_strategy, baseline_metrics = _baseline_metrics_for_preregistration(candidate_id, ledger_path)
+    transform_config = {
+        **dict(fit_record["fit_result"].get("target_transform_config") or {}),
+        "minimum_observations": 20,
+        "minimum_coverage": 0.8,
+        "window_count": 3,
+        "minimum_window_stability": 0.5,
+        "minimum_direction_agreement": 0.5,
+    }
     preregistration = create_preregistration(
         hypothesis=fit_record["hypothesis"],
         snapshot_manifest=manifest,
         fitted_parameters=fit_record["fit_result"]["fitted_parameters"],
         baseline_metrics=baseline_metrics,
-        transform_config={
-            "minimum_observations": 20,
-            "minimum_coverage": 0.8,
-            "window_count": 3,
-        },
+        baseline_strategy=baseline_strategy,
+        transform_config=transform_config,
     )
     prereg_payload = preregistration.to_dict()
     prereg_payload["preregistration_hash"] = preregistration.preregistration_hash()
@@ -493,6 +515,7 @@ def _preregister_candidate(
         "candidate_id": candidate_id,
         "snapshot_id": preregistration.snapshot_id,
         "hypothesis_hash": preregistration.hypothesis_hash,
+        "baseline_strategy": baseline_strategy,
         "baseline_metrics": baseline_metrics,
         "artifact": prereg_artifact,
     }
@@ -582,22 +605,31 @@ def _candidate_artifact_payload(hypothesis: HypothesisSpec) -> dict[str, Any]:
     }
 
 
-def _baseline_metrics_for_preregistration(candidate_id: str, ledger_path: Path) -> dict[str, float]:
+def _baseline_metrics_for_preregistration(
+    candidate_id: str,
+    ledger_path: Path,
+) -> tuple[str, dict[str, float]]:
     tuning_entry = _latest_tuning_entry(candidate_id, ledger_path)
     if tuning_entry is None:
         raise ScienceCliError(f"no tuning result found for candidate {candidate_id}")
     evaluations = tuning_entry["payload"].get("evaluations") or []
-    evaluation = next(
-        (item for item in evaluations if item.get("candidate_id") == candidate_id),
-        None,
-    )
+    evaluation = next((item for item in evaluations if item.get("candidate_id") == candidate_id), None)
     if evaluation is None:
         raise ScienceCliError(f"candidate {candidate_id} not found in latest tuning result")
-    mae = _first_number(evaluation, "persistence_baseline_mae", "zero_baseline_mae")
-    rmse = _first_number(evaluation, "persistence_baseline_rmse", "zero_baseline_rmse")
+    strategy = str(evaluation.get("baseline_strategy") or "zero_residual")
+    prefix = "persistence" if strategy == "persistence" else "zero"
+    mae = _first_number(evaluation, f"{prefix}_baseline_mae")
+    rmse = _first_number(evaluation, f"{prefix}_baseline_rmse")
     if mae is None or rmse is None:
-        raise ScienceCliError("tuning result lacks baseline metrics for preregistration")
-    return {"mae": mae, "rmse": rmse}
+        raise ScienceCliError("tuning result lacks selected baseline metrics for preregistration")
+    return strategy, {
+        "tuning_mae": mae,
+        "tuning_rmse": rmse,
+        "zero_mae": float(evaluation["zero_baseline_mae"]),
+        "zero_rmse": float(evaluation["zero_baseline_rmse"]),
+        "persistence_mae": float(evaluation["persistence_baseline_mae"]),
+        "persistence_rmse": float(evaluation["persistence_baseline_rmse"]),
+    }
 
 
 def _latest_fit_entry(candidate_id: str, ledger_path: Path) -> dict[str, Any] | None:

@@ -6,13 +6,13 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from resonance.science.contracts import HypothesisSpec
-from resonance.science.discovery_brief import DiscoveryBrief, serialize_discovery_brief
+from resonance.science.contracts import HypothesisSpec, canonical_json
+from resonance.science.discovery_brief import DiscoveryBrief
 from resonance.science.providers.base import ProviderError, validate_max_hypotheses
 
 
 PROMPT_VERSION = "science-openai-provider-v1"
-DEFAULT_MODEL = "gpt-4.1-mini"
+DEFAULT_MODEL = "gpt-5.5"
 DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_MAX_RETRIES = 2
 
@@ -59,12 +59,19 @@ class OpenAIProvider:
         seed: int,
     ) -> list[HypothesisSpec]:
         normalized_max = validate_max_hypotheses(max_hypotheses)
-        brief_json = serialize_discovery_brief(brief)
+        request_payload = canonical_json(
+            {
+                "discovery_brief": brief.model_dump(mode="json", exclude_none=True),
+                "max_hypotheses": normalized_max,
+                "requested_seed": int(seed),
+                "seed_note": "provenance only; the remote model is not assumed deterministic",
+            }
+        )
         response = self._responses_create(
             model=self.model,
             input=[
                 {"role": "system", "content": _INSTRUCTIONS},
-                {"role": "user", "content": brief_json},
+                {"role": "user", "content": request_payload},
             ],
             text={
                 "format": {
@@ -85,6 +92,9 @@ class OpenAIProvider:
         )
         self.request_config = {
             **self.request_config,
+            "requested_seed": int(seed),
+            "deterministic_seed_applied": False,
+            "max_hypotheses": normalized_max,
             "response_id": getattr(response, "id", None),
             "response_model": getattr(response, "model", None) or self.model,
             "response_metadata": _response_metadata(response),

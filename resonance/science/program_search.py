@@ -20,7 +20,12 @@ from resonance.science.contracts import (
 )
 from resonance.science.fitting import FitResult, FittingError, fit_hypothesis
 from resonance.science.ledger import DEFAULT_LEDGER_PATH, append_event, current_code_commit
-from resonance.science.mutation import MutationConfig, MutationError, mutate_hypothesis
+from resonance.science.mutation import (
+    MutationConfig,
+    MutationError,
+    MutationOperator,
+    mutate_hypothesis,
+)
 from resonance.science.selection import CandidateEvaluation, SelectionError, SelectionResult, select_candidate
 from resonance.science.snapshots import DEFAULT_ARTIFACT_ROOT, load_exploration_view, load_snapshot_manifest
 from resonance.time_utils import parse_utc
@@ -29,7 +34,10 @@ from resonance.time_utils import parse_utc
 EVALUATOR_VERSION = "bounded-program-search-v1"
 DEFAULT_BUDGET = 100
 DEFAULT_BEAM_WIDTH = 10
-DEFAULT_STALL_ROUNDS = 2
+# Program search is exploratory and deliberately budgeted. Stop after the
+# first generation that fails to improve rather than burning the full default
+# budget on cosmetically different expressions.
+DEFAULT_STALL_ROUNDS = 1
 DEFAULT_IMPROVEMENT_EPSILON = 1.0e-6
 
 
@@ -166,9 +174,13 @@ def run_program_search(
     evaluated: list[EvaluatedCandidate] = []
     warnings: list[str] = []
     seen_hashes: set[str] = set()
-    frontier: list[tuple[HypothesisSpec, int, str | None, str | None]] = [
-        (seed, 0, None, None) for seed in seeds
-    ]
+    frontier = _seed_frontier(
+        seeds,
+        metric_catalog=metric_catalog,
+        snapshot_max_lag_seconds=int(manifest.get("max_lag_seconds", 0)),
+        budget=config.budget,
+        seed=config.random_seed,
+    )
     best_score = -math.inf
     stalled_rounds = 0
     stopped_reason = "budget_exhausted"
@@ -365,6 +377,50 @@ def _parse_hypothesis(value: HypothesisSpec | Mapping[str, Any], metric_catalog:
         value.validate_metric_catalog(metric_catalog)
         return value
     return HypothesisSpec.model_validate(value, context={"metric_catalog": metric_catalog})
+
+
+def _seed_frontier(
+    seeds: Sequence[HypothesisSpec],
+    *,
+    metric_catalog: Any,
+    snapshot_max_lag_seconds: int,
+    budget: int,
+    seed: int,
+) -> list[tuple[HypothesisSpec, int, str | None, str | None]]:
+    """Include cheap lag variants before open-ended structural mutation.
+
+    Lag is a core numerical search dimension for time-series hypotheses. A
+    random subset of all mutation operators must not be able to omit every
+    plausible lag and make the search miss an otherwise obvious relation.
+    """
+
+    frontier: list[tuple[HypothesisSpec, int, str | None, str | None]] = [
+        (hypothesis, 0, None, None) for hypothesis in seeds
+    ]
+    remaining = max(0, budget - len(frontier))
+    for index, hypothesis in enumerate(seeds):
+        if remaining <= 0 or snapshot_max_lag_seconds <= 0:
+            break
+        try:
+            variants = mutate_hypothesis(
+                hypothesis,
+                seed=seed + index,
+                config=MutationConfig(
+                    max_children=remaining,
+                    operators=(MutationOperator.CHANGE_LAG, MutationOperator.ADD_LAG),
+                ),
+                metric_catalog=metric_catalog,
+                snapshot_max_lag_seconds=snapshot_max_lag_seconds,
+            )
+        except MutationError:
+            continue
+        parent_hash = hypothesis.hypothesis_hash()
+        for child in variants:
+            frontier.append((child, 1, f"seed-{parent_hash[:12]}", parent_hash))
+            remaining -= 1
+            if remaining <= 0:
+                break
+    return _dedupe_frontier(frontier)
 
 
 def _evaluate_candidate(

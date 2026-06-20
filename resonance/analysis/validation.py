@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import math
 import random
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
-from resonance.analysis.contracts import FrameLike, TableLike, ValidationResult
+import numpy as np
+
+from resonance.analysis.contracts import FrameLike, ValidationResult
+from resonance.analysis.correlation import numeric_array, spearman_at_lag
 
 
 DEFAULT_RANDOM_SEED = 20260619
@@ -19,7 +21,7 @@ def chronological_holdout_validation(
     holdout_fraction: float = 0.25,
     min_overlap: int = DEFAULT_MIN_OVERLAP,
 ) -> ValidationResult:
-    """Select the best lag on discovery rows, then evaluate that lag on holdout rows."""
+    """Select the best lag on discovery rows, then evaluate it with Spearman on holdout."""
 
     rows = _coerce_rows(frame)
     lags = _candidate_lags(candidate_lag_steps)
@@ -42,7 +44,11 @@ def chronological_holdout_validation(
             warnings=tuple(warnings),
         )
 
-    holdout_rho, holdout_overlap = _rho_at_lag(holdout_rows, best["lag_steps"], min_overlap=min_overlap)
+    holdout_rho, holdout_overlap = _rho_at_lag(
+        holdout_rows,
+        best["lag_steps"],
+        min_overlap=min_overlap,
+    )
     if holdout_rho is None:
         warnings.append("holdout lag did not meet the minimum overlap or variance requirement")
 
@@ -64,14 +70,15 @@ def max_lag_block_permutation_test(
     min_overlap: int = DEFAULT_MIN_OVERLAP,
     seed: int = DEFAULT_RANDOM_SEED,
 ) -> float | None:
-    """Estimate a p-value for the maximum absolute rho across the full lag search."""
+    """Estimate a max-over-lags Spearman p-value using contiguous Y blocks."""
 
     if permutations <= 0:
         raise ValueError("permutations must be positive")
 
     rows = _coerce_rows(frame)
     lags = _candidate_lags(candidate_lag_steps)
-    observed = _max_abs_rho(rows, lags, min_overlap=min_overlap)
+    x, y = _xy_arrays(rows)
+    observed = _max_abs_rho_arrays(x, y, lags, min_overlap=min_overlap)
     if observed is None:
         return None
 
@@ -82,8 +89,8 @@ def max_lag_block_permutation_test(
     rng = random.Random(seed)
     null_at_least_observed = 0
     for _ in range(permutations):
-        permuted_rows = _permute_y_blocks(rows, block_size=resolved_block_size, rng=rng)
-        permuted_max = _max_abs_rho(permuted_rows, lags, min_overlap=min_overlap)
+        permuted_y = _permute_blocks(y, block_size=resolved_block_size, rng=rng)
+        permuted_max = _max_abs_rho_arrays(x, permuted_y, lags, min_overlap=min_overlap)
         if permuted_max is not None and permuted_max >= observed:
             null_at_least_observed += 1
 
@@ -97,7 +104,7 @@ def window_stability(
     window_count: int = 4,
     min_overlap: int = DEFAULT_MIN_OVERLAP,
 ) -> ValidationResult:
-    """Evaluate one frozen lag in chronological windows and report sign stability."""
+    """Evaluate one frozen Spearman lag in chronological windows."""
 
     if window_count <= 0:
         raise ValueError("window_count must be positive")
@@ -149,7 +156,13 @@ def window_stability(
 
 def _coerce_rows(frame: FrameLike) -> tuple[Mapping[str, Any], ...]:
     source = frame.frame if hasattr(frame, "frame") else frame
-    rows = tuple(source)
+    if hasattr(source, "to_dict"):
+        try:
+            rows = tuple(source.reset_index().to_dict(orient="records"))
+        except (AttributeError, TypeError, ValueError):
+            rows = tuple(source)
+    else:
+        rows = tuple(source)
     if not rows:
         raise ValueError("frame must contain at least one row")
     for row in rows:
@@ -161,7 +174,7 @@ def _coerce_rows(frame: FrameLike) -> tuple[Mapping[str, Any], ...]:
 
 
 def _candidate_lags(candidate_lag_steps: Iterable[int]) -> tuple[int, ...]:
-    lags = tuple(dict.fromkeys(candidate_lag_steps))
+    lags = tuple(dict.fromkeys(int(lag) for lag in candidate_lag_steps))
     if not lags:
         raise ValueError("candidate_lag_steps must contain at least one lag")
     return lags
@@ -173,28 +186,43 @@ def _best_lag_score(
     *,
     min_overlap: int,
 ) -> dict[str, Any] | None:
+    x, y = _xy_arrays(rows)
     scores = []
     for lag_steps in candidate_lag_steps:
-        rho, overlap = _rho_at_lag(rows, lag_steps, min_overlap=min_overlap)
+        rho, overlap = spearman_at_lag(x, y, lag_steps, min_overlap=min_overlap)
         if rho is None:
             continue
         scores.append({"lag_steps": lag_steps, "rho": rho, "overlap_count": overlap})
 
     if not scores:
         return None
-    return max(scores, key=lambda score: (abs(score["rho"]), score["overlap_count"], -abs(score["lag_steps"])))
+    return max(
+        scores,
+        key=lambda score: (
+            abs(score["rho"]),
+            score["overlap_count"],
+            -abs(score["lag_steps"]),
+            score["lag_steps"],
+        ),
+    )
 
 
-def _max_abs_rho(
-    rows: Sequence[Mapping[str, Any]],
+def _max_abs_rho_arrays(
+    x: np.ndarray,
+    y: np.ndarray,
     candidate_lag_steps: Sequence[int],
     *,
     min_overlap: int,
 ) -> float | None:
-    best = _best_lag_score(rows, candidate_lag_steps, min_overlap=min_overlap)
-    if best is None:
-        return None
-    return abs(best["rho"])
+    best: float | None = None
+    for lag in candidate_lag_steps:
+        rho, _ = spearman_at_lag(x, y, lag, min_overlap=min_overlap)
+        if rho is None:
+            continue
+        score = abs(rho)
+        if best is None or score > best:
+            best = score
+    return best
 
 
 def _rho_at_lag(
@@ -203,47 +231,15 @@ def _rho_at_lag(
     *,
     min_overlap: int,
 ) -> tuple[float | None, int]:
-    if abs(lag_steps) >= len(rows):
-        return None, 0
-
-    x_start = max(0, -lag_steps)
-    y_start = max(0, lag_steps)
-    pair_count = len(rows) - abs(lag_steps)
-    left: list[float] = []
-    right: list[float] = []
-
-    for offset in range(pair_count):
-        x_value = _optional_float(rows[x_start + offset]["x"])
-        y_value = _optional_float(rows[y_start + offset]["y"])
-        if x_value is not None and y_value is not None:
-            left.append(x_value)
-            right.append(y_value)
-
-    overlap = len(left)
-    if overlap < min_overlap:
-        return None, overlap
-    return _pearson(left, right), overlap
+    x, y = _xy_arrays(rows)
+    return spearman_at_lag(x, y, lag_steps, min_overlap=min_overlap)
 
 
-def _pearson(left: Sequence[float], right: Sequence[float]) -> float | None:
-    left_mean = sum(left) / len(left)
-    right_mean = sum(right) / len(right)
-    numerator = sum((x - left_mean) * (y - right_mean) for x, y in zip(left, right))
-    left_variance = sum((x - left_mean) ** 2 for x in left)
-    right_variance = sum((y - right_mean) ** 2 for y in right)
-    denominator = math.sqrt(left_variance * right_variance)
-    if denominator == 0:
-        return None
-    return numerator / denominator
-
-
-def _optional_float(value: Any) -> float | None:
-    if value is None or value == "":
-        return None
-    numeric = float(value)
-    if math.isnan(numeric):
-        return None
-    return numeric
+def _xy_arrays(rows: Sequence[Mapping[str, Any]]) -> tuple[np.ndarray, np.ndarray]:
+    return (
+        numeric_array([row.get("x") for row in rows]),
+        numeric_array([row.get("y") for row in rows]),
+    )
 
 
 def _default_block_size(row_count: int, candidate_lag_steps: Sequence[int]) -> int:
@@ -251,17 +247,10 @@ def _default_block_size(row_count: int, candidate_lag_steps: Sequence[int]) -> i
     return max(2, max_lag + 1, row_count // 20)
 
 
-def _permute_y_blocks(
-    rows: Sequence[Mapping[str, Any]],
-    *,
-    block_size: int,
-    rng: random.Random,
-) -> tuple[dict[str, Any], ...]:
-    y_values = [row["y"] for row in rows]
-    blocks = [y_values[index : index + block_size] for index in range(0, len(y_values), block_size)]
+def _permute_blocks(values: np.ndarray, *, block_size: int, rng: random.Random) -> np.ndarray:
+    blocks = [values[index : index + block_size].copy() for index in range(0, len(values), block_size)]
     rng.shuffle(blocks)
-    shuffled_y = [value for block in blocks for value in block]
-    return tuple({**row, "y": shuffled_y[index]} for index, row in enumerate(rows))
+    return np.concatenate(blocks) if blocks else values.copy()
 
 
 def _chronological_windows(
