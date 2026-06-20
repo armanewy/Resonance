@@ -4,9 +4,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
 
-from resonance.config import EiaGridPublicSourceConfig
-from resonance.public_collector import main, run_once
+from resonance.config import EiaGridPublicSourceConfig, LocationConfig, RipeAtlasPublicSourceConfig
+from resonance.public_collector import main, run_once, run_ripe_once
 from resonance.public_sources.eia_grid import ROUTES, SOURCE_ID
+from resonance.public_sources.ripe_atlas import SOURCE_ID as RIPE_SOURCE_ID
 from resonance.storage import ensure_database
 
 
@@ -52,9 +53,14 @@ enabled = false
             "SELECT enabled FROM public_sources WHERE source_id = ?",
             (SOURCE_ID,),
         ).fetchone()
+        ripe_source = conn.execute(
+            "SELECT enabled FROM public_sources WHERE source_id = ?",
+            (RIPE_SOURCE_ID,),
+        ).fetchone()
     finally:
         conn.close()
     assert source["enabled"] == 0
+    assert ripe_source["enabled"] == 0
 
 
 def test_public_collector_missing_credentials_records_health_without_polling(tmp_path, monkeypatch) -> None:
@@ -160,6 +166,68 @@ def test_public_collector_redacts_api_key_from_failures(tmp_path, monkeypatch) -
     assert "REDACTED" in error_text
 
 
+def test_ripe_public_collector_runs_without_api_key(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("RIPE_ATLAS_API_KEY", raising=False)
+    seen: dict[str, object] = {}
+
+    def poller(conn, **kwargs):
+        seen["location"] = kwargs["location"]
+        seen["raw_root"] = kwargs["raw_root"]
+        return _PollResult(inserted_observations=4)
+
+    ok = run_ripe_once(
+        _ripe_config(),
+        location_config=_location(),
+        database_path=tmp_path / "resonance.db",
+        raw_root=tmp_path / "raw",
+        poller=poller,
+    )
+
+    conn = ensure_database(tmp_path / "resonance.db")
+    try:
+        source = conn.execute(
+            "SELECT enabled FROM public_sources WHERE source_id = ?",
+            (RIPE_SOURCE_ID,),
+        ).fetchone()
+        errors = conn.execute("SELECT collector, error_type, message FROM collector_errors").fetchall()
+    finally:
+        conn.close()
+
+    assert ok is True
+    assert seen["location"] == _location()
+    assert seen["raw_root"] == tmp_path / "raw"
+    assert source["enabled"] == 1
+    assert errors == []
+
+
+def test_ripe_public_collector_redacts_optional_api_key_from_failures(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("RIPE_ATLAS_API_KEY", "RIPE_SECRET")
+
+    def poller(*_args, **_kwargs):
+        raise RuntimeError("upstream rejected RIPE_SECRET")
+
+    ok = run_ripe_once(
+        _ripe_config(),
+        location_config=_location(),
+        database_path=tmp_path / "resonance.db",
+        raw_root=tmp_path / "raw",
+        poller=poller,
+    )
+
+    conn = ensure_database(tmp_path / "resonance.db")
+    try:
+        state_text = "\n".join(row["latest_error"] for row in conn.execute("SELECT latest_error FROM public_collection_state").fetchall())
+        error_text = "\n".join(row["message"] for row in conn.execute("SELECT message FROM collector_errors").fetchall())
+    finally:
+        conn.close()
+
+    assert ok is False
+    assert "RIPE_SECRET" not in state_text
+    assert "RIPE_SECRET" not in error_text
+    assert "REDACTED" in state_text
+    assert "REDACTED" in error_text
+
+
 def _eia_config() -> EiaGridPublicSourceConfig:
     return EiaGridPublicSourceConfig(
         enabled=True,
@@ -168,3 +236,29 @@ def _eia_config() -> EiaGridPublicSourceConfig:
         normal_lookback_hours=72,
         maximum_gap_repair_hours=2160,
     )
+
+
+def _ripe_config() -> RipeAtlasPublicSourceConfig:
+    return RipeAtlasPublicSourceConfig(
+        enabled=True,
+        poll_interval_seconds=900,
+        initial_backfill_hours=168,
+        normal_lookback_hours=6,
+        aggregation_seconds=900,
+        finalization_delay_seconds=600,
+        initial_radius_km=150,
+        maximum_radius_km=500,
+        desired_probe_count=24,
+        minimum_probe_count=8,
+        maximum_probes_per_asn=2,
+        maximum_anchor_count=4,
+        cohort_refresh_hours=24,
+        result_chunk_hours=6,
+        maximum_probe_batch_size=50,
+        maximum_requests_per_poll=200,
+        measurement_ids=(1001, 1004, 1009),
+    )
+
+
+def _location() -> LocationConfig:
+    return LocationConfig("Framingham, Massachusetts", 42.2793, -71.4162, "America/New_York")

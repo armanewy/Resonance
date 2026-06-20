@@ -72,6 +72,7 @@ REGIONAL_GEOGRAPHY_TYPES = {
     "city",
     "county",
     "metro",
+    "regional_radius",
     "region",
     "state",
 }
@@ -630,6 +631,8 @@ def _scanner_series_profile(
 
 
 def _series_rejection_reason(series: ScannerCandidateSeries, options: CandidateOptions) -> str | None:
+    if _is_diagnostic_series(series):
+        return "diagnostic_series"
     if _is_status_series(series):
         return "status_or_flag_series"
     if series.numeric_count != series.sample_count:
@@ -643,6 +646,15 @@ def _series_rejection_reason(series: ScannerCandidateSeries, options: CandidateO
     if series.coverage is None or series.coverage < options.min_coverage:
         return "low_coverage"
     return None
+
+
+def _is_diagnostic_series(series: ScannerCandidateSeries) -> bool:
+    for metadata in series.metadata:
+        if metadata.get("analysis_eligible") is False:
+            return True
+        if metadata.get("diagnostic") is True and metadata.get("analysis_eligible") is not True:
+            return True
+    return False
 
 
 def _is_status_series(series: ScannerCandidateSeries) -> bool:

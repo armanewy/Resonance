@@ -54,8 +54,30 @@ class EiaGridPublicSourceConfig:
 
 
 @dataclass(frozen=True)
+class RipeAtlasPublicSourceConfig:
+    enabled: bool
+    poll_interval_seconds: int
+    initial_backfill_hours: int
+    normal_lookback_hours: int
+    aggregation_seconds: int
+    finalization_delay_seconds: int
+    initial_radius_km: int
+    maximum_radius_km: int
+    desired_probe_count: int
+    minimum_probe_count: int
+    maximum_probes_per_asn: int
+    maximum_anchor_count: int
+    cohort_refresh_hours: int
+    result_chunk_hours: int
+    maximum_probe_batch_size: int
+    maximum_requests_per_poll: int
+    measurement_ids: tuple[int, ...]
+
+
+@dataclass(frozen=True)
 class PublicSourcesConfig:
     eia_grid: EiaGridPublicSourceConfig
+    ripe_atlas: RipeAtlasPublicSourceConfig
 
 
 @dataclass(frozen=True)
@@ -80,6 +102,7 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> AppConfig:
     notifications = _optional_table(raw, "notifications")
     public_sources = _optional_table(raw, "public_sources")
     eia_grid = _optional_table(public_sources, "eia_grid")
+    ripe_atlas = _optional_table(public_sources, "ripe_atlas")
 
     name = _required_str(location, "location.name")
     latitude = _required_float(location, "location.latitude")
@@ -179,6 +202,48 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> AppConfig:
     if eia_max_gap_repair <= 0:
         raise ConfigError("public_sources.eia_grid.maximum_gap_repair_hours must be positive")
 
+    ripe_enabled = _optional_bool(ripe_atlas, "public_sources.ripe_atlas.enabled", False)
+    ripe_poll_interval = _optional_int(ripe_atlas, "public_sources.ripe_atlas.poll_interval_seconds", 900)
+    ripe_initial_backfill = _optional_int(ripe_atlas, "public_sources.ripe_atlas.initial_backfill_hours", 168)
+    ripe_normal_lookback = _optional_int(ripe_atlas, "public_sources.ripe_atlas.normal_lookback_hours", 6)
+    ripe_aggregation = _optional_int(ripe_atlas, "public_sources.ripe_atlas.aggregation_seconds", 900)
+    ripe_finalization_delay = _optional_int(ripe_atlas, "public_sources.ripe_atlas.finalization_delay_seconds", 600)
+    ripe_initial_radius = _optional_int(ripe_atlas, "public_sources.ripe_atlas.initial_radius_km", 150)
+    ripe_max_radius = _optional_int(ripe_atlas, "public_sources.ripe_atlas.maximum_radius_km", 500)
+    ripe_desired_probes = _optional_int(ripe_atlas, "public_sources.ripe_atlas.desired_probe_count", 24)
+    ripe_minimum_probes = _optional_int(ripe_atlas, "public_sources.ripe_atlas.minimum_probe_count", 8)
+    ripe_max_per_asn = _optional_int(ripe_atlas, "public_sources.ripe_atlas.maximum_probes_per_asn", 2)
+    ripe_max_anchors = _optional_int(ripe_atlas, "public_sources.ripe_atlas.maximum_anchor_count", 4)
+    ripe_refresh_hours = _optional_int(ripe_atlas, "public_sources.ripe_atlas.cohort_refresh_hours", 24)
+    ripe_chunk_hours = _optional_int(ripe_atlas, "public_sources.ripe_atlas.result_chunk_hours", 6)
+    ripe_max_batch = _optional_int(ripe_atlas, "public_sources.ripe_atlas.maximum_probe_batch_size", 50)
+    ripe_max_requests = _optional_int(ripe_atlas, "public_sources.ripe_atlas.maximum_requests_per_poll", 200)
+    ripe_measurement_ids = _optional_int_list(ripe_atlas, "public_sources.ripe_atlas.measurement_ids", (1001, 1004, 1009))
+
+    _require_positive("public_sources.ripe_atlas.poll_interval_seconds", ripe_poll_interval)
+    _require_positive("public_sources.ripe_atlas.initial_backfill_hours", ripe_initial_backfill)
+    _require_positive("public_sources.ripe_atlas.normal_lookback_hours", ripe_normal_lookback)
+    _require_positive("public_sources.ripe_atlas.aggregation_seconds", ripe_aggregation)
+    _require_positive("public_sources.ripe_atlas.finalization_delay_seconds", ripe_finalization_delay)
+    _require_positive("public_sources.ripe_atlas.initial_radius_km", ripe_initial_radius)
+    _require_positive("public_sources.ripe_atlas.maximum_radius_km", ripe_max_radius)
+    _require_positive("public_sources.ripe_atlas.desired_probe_count", ripe_desired_probes)
+    _require_positive("public_sources.ripe_atlas.minimum_probe_count", ripe_minimum_probes)
+    _require_positive("public_sources.ripe_atlas.maximum_probes_per_asn", ripe_max_per_asn)
+    _require_positive("public_sources.ripe_atlas.maximum_anchor_count", ripe_max_anchors)
+    _require_positive("public_sources.ripe_atlas.cohort_refresh_hours", ripe_refresh_hours)
+    _require_positive("public_sources.ripe_atlas.result_chunk_hours", ripe_chunk_hours)
+    _require_positive("public_sources.ripe_atlas.maximum_probe_batch_size", ripe_max_batch)
+    _require_positive("public_sources.ripe_atlas.maximum_requests_per_poll", ripe_max_requests)
+    if ripe_initial_radius > ripe_max_radius:
+        raise ConfigError("public_sources.ripe_atlas.initial_radius_km must not exceed maximum_radius_km")
+    if ripe_minimum_probes > ripe_desired_probes:
+        raise ConfigError("public_sources.ripe_atlas.minimum_probe_count must not exceed desired_probe_count")
+    if not ripe_measurement_ids:
+        raise ConfigError("public_sources.ripe_atlas.measurement_ids must not be empty")
+    if any(measurement_id <= 0 for measurement_id in ripe_measurement_ids):
+        raise ConfigError("public_sources.ripe_atlas.measurement_ids must contain positive integers")
+
     return AppConfig(
         location=LocationConfig(
             name=name,
@@ -212,7 +277,26 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> AppConfig:
                 initial_backfill_hours=eia_initial_backfill,
                 normal_lookback_hours=eia_normal_lookback,
                 maximum_gap_repair_hours=eia_max_gap_repair,
-            )
+            ),
+            ripe_atlas=RipeAtlasPublicSourceConfig(
+                enabled=ripe_enabled,
+                poll_interval_seconds=ripe_poll_interval,
+                initial_backfill_hours=ripe_initial_backfill,
+                normal_lookback_hours=ripe_normal_lookback,
+                aggregation_seconds=ripe_aggregation,
+                finalization_delay_seconds=ripe_finalization_delay,
+                initial_radius_km=ripe_initial_radius,
+                maximum_radius_km=ripe_max_radius,
+                desired_probe_count=ripe_desired_probes,
+                minimum_probe_count=ripe_minimum_probes,
+                maximum_probes_per_asn=ripe_max_per_asn,
+                maximum_anchor_count=ripe_max_anchors,
+                cohort_refresh_hours=ripe_refresh_hours,
+                result_chunk_hours=ripe_chunk_hours,
+                maximum_probe_batch_size=ripe_max_batch,
+                maximum_requests_per_poll=ripe_max_requests,
+                measurement_ids=ripe_measurement_ids,
+            ),
         ),
     )
 
@@ -285,3 +369,21 @@ def _optional_int(table: dict, dotted_key: str, default: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ConfigError(f"{dotted_key} must be an integer")
     return value
+
+
+def _optional_int_list(table: dict, dotted_key: str, default: tuple[int, ...]) -> tuple[int, ...]:
+    key = dotted_key.split(".")[-1]
+    value = table.get(key, list(default))
+    if not isinstance(value, list):
+        raise ConfigError(f"{dotted_key} must be a list of integers")
+    parsed = []
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, int):
+            raise ConfigError(f"{dotted_key} must be a list of integers")
+        parsed.append(item)
+    return tuple(parsed)
+
+
+def _require_positive(dotted_key: str, value: int) -> None:
+    if value <= 0:
+        raise ConfigError(f"{dotted_key} must be positive")

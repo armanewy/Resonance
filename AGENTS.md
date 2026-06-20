@@ -35,6 +35,10 @@ python -m resonance.public_collector
 python -m resonance.public_sources.eia_grid status
 python -m resonance.public_sources.eia_grid backfill --start 2026-06-19T00:00:00Z --end 2026-06-20T00:00:00Z
 python -m resonance.public_sources.eia_grid poll
+python -m resonance.public_sources.ripe_atlas status
+python -m resonance.public_sources.ripe_atlas probes
+python -m resonance.public_sources.ripe_atlas backfill --start 2026-06-01T00:00:00Z --end 2026-06-08T00:00:00Z
+python -m resonance.public_sources.ripe_atlas poll
 python -m resonance.audit --hours 24
 python -m resonance.analyze_pair --x tcp_latency_ms --y cpu_percent --hours 24 --transform first_difference --max-lag-minutes 60
 python -m resonance.scan --hours 168 --dry-run

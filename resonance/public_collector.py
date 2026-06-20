@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from resonance.config import ConfigError, EiaGridPublicSourceConfig, load_config
+from resonance.config import ConfigError, EiaGridPublicSourceConfig, LocationConfig, RipeAtlasPublicSourceConfig, load_config
 from resonance.public_sources.eia_grid import (
     DEFAULT_RAW_ROOT,
     ROUTES,
@@ -16,6 +16,11 @@ from resonance.public_sources.eia_grid import (
     EiaGridError,
     ensure_eia_registry,
     poll_new_england_grid,
+)
+from resonance.public_sources.ripe_atlas import (
+    SOURCE_ID as RIPE_SOURCE_ID,
+    ensure_ripe_registry,
+    poll_regional_ipv4_health,
 )
 from resonance.storage import (
     CollectorError,
@@ -30,6 +35,7 @@ from resonance.time_utils import utc_now
 
 LOG = logging.getLogger("resonance.public_collector")
 LOCK_PATH = Path("data/public/eia_grid.lock")
+RIPE_LOCK_PATH = Path("data/public/ripe_atlas.lock")
 
 
 def main(stop_requested: threading.Event | None = None) -> int:
@@ -44,41 +50,54 @@ def main(stop_requested: threading.Event | None = None) -> int:
         return 2
 
     eia_config = config.public_sources.eia_grid
-    if not eia_config.enabled:
+    ripe_config = config.public_sources.ripe_atlas
+    if not eia_config.enabled and not ripe_config.enabled:
         LOG.info("No public source enabled; public collector exiting.")
         conn = ensure_database()
         try:
             ensure_eia_registry(conn, enabled=False)
+            ensure_ripe_registry(conn, config=ripe_config, location=config.location, enabled=False)
         finally:
             conn.close()
         return 0
 
-    lock = _acquire_lock(LOCK_PATH)
-    if lock is None:
-        LOG.warning("EIA public collector lock is already held; exiting.")
-        return 0
-    try:
-        return run_loop(eia_config, stop_event=stop_event)
-    finally:
-        _release_lock(lock, LOCK_PATH)
+    return run_loop(
+        eia_config,
+        ripe_config=ripe_config,
+        location_config=config.location,
+        stop_event=stop_event,
+    )
 
 
 def run_loop(
     eia_config: EiaGridPublicSourceConfig,
     *,
+    ripe_config: RipeAtlasPublicSourceConfig | None = None,
+    location_config: LocationConfig | None = None,
     stop_event: threading.Event,
     poller: Callable[..., object] = poll_new_england_grid,
+    ripe_poller: Callable[..., object] = poll_regional_ipv4_health,
     database_path: str | Path = "data/resonance.db",
     raw_root: Path = DEFAULT_RAW_ROOT,
 ) -> int:
     conn = ensure_database(database_path)
     try:
-        next_poll = 0.0
+        next_eia_poll = 0.0
+        next_ripe_poll = 0.0
         while not stop_event.is_set():
             now_monotonic = time.monotonic()
-            if now_monotonic >= next_poll:
+            if eia_config.enabled and now_monotonic >= next_eia_poll:
                 run_once(eia_config, database_path=database_path, raw_root=raw_root, poller=poller)
-                next_poll = now_monotonic + eia_config.poll_interval_seconds
+                next_eia_poll = now_monotonic + eia_config.poll_interval_seconds
+            if ripe_config and ripe_config.enabled and location_config and now_monotonic >= next_ripe_poll:
+                run_ripe_once(
+                    ripe_config,
+                    location_config=location_config,
+                    database_path=database_path,
+                    raw_root=raw_root,
+                    poller=ripe_poller,
+                )
+                next_ripe_poll = now_monotonic + ripe_config.poll_interval_seconds
             stop_event.wait(0.5)
     finally:
         conn.close()
@@ -92,6 +111,10 @@ def run_once(
     raw_root: Path = DEFAULT_RAW_ROOT,
     poller: Callable[..., object] = poll_new_england_grid,
 ) -> bool:
+    lock = _acquire_lock(LOCK_PATH)
+    if lock is None:
+        LOG.warning("EIA public collector lock is already held; skipping.")
+        return False
     conn = ensure_database(database_path)
     try:
         api_key = os.environ.get("EIA_API_KEY", "")
@@ -119,6 +142,40 @@ def run_once(
         return True
     finally:
         conn.close()
+        _release_lock(lock, LOCK_PATH)
+
+
+def run_ripe_once(
+    ripe_config: RipeAtlasPublicSourceConfig,
+    *,
+    location_config: LocationConfig,
+    database_path: str | Path = "data/resonance.db",
+    raw_root: Path = DEFAULT_RAW_ROOT,
+    poller: Callable[..., object] = poll_regional_ipv4_health,
+) -> bool:
+    lock = _acquire_lock(RIPE_LOCK_PATH)
+    if lock is None:
+        LOG.warning("RIPE Atlas public collector lock is already held; skipping.")
+        return False
+    conn = ensure_database(database_path)
+    try:
+        ensure_ripe_registry(conn, config=ripe_config, location=location_config, enabled=ripe_config.enabled)
+        try:
+            result = poller(conn, config=ripe_config, location=location_config, raw_root=raw_root)
+        except Exception as exc:
+            _record_ripe_failure(conn, exc)
+            safe_message = _redact_ripe_error(exc)
+            insert_collector_error(
+                conn,
+                CollectorError(utc_now(), RIPE_SOURCE_ID, exc.__class__.__name__, safe_message),
+            )
+            LOG.warning("RIPE Atlas public collection failed: %s", safe_message)
+            return False
+        LOG.info("RIPE Atlas public collection inserted %s observations", getattr(result, "inserted_observations", "unknown"))
+        return True
+    finally:
+        conn.close()
+        _release_lock(lock, RIPE_LOCK_PATH)
 
 
 def _record_failure(conn, exc: BaseException) -> None:
@@ -142,6 +199,33 @@ def _record_failure(conn, exc: BaseException) -> None:
             ),
         )
     conn.commit()
+
+
+def _record_ripe_failure(conn, exc: BaseException) -> None:
+    now = utc_now()
+    message = _redact_ripe_error(exc)
+    previous = fetch_public_collection_state(conn, source_id=RIPE_SOURCE_ID, route="regional_ipv4_ping")
+    upsert_public_collection_state(
+        conn,
+        PublicCollectionState(
+            source_id=RIPE_SOURCE_ID,
+            route="regional_ipv4_ping",
+            last_successful_poll_utc=previous.last_successful_poll_utc if previous else None,
+            newest_complete_valid_period_utc=previous.newest_complete_valid_period_utc if previous else None,
+            earliest_unresolved_gap_utc=previous.earliest_unresolved_gap_utc if previous else None,
+            latest_error_utc=now,
+            latest_error=message,
+            consecutive_failure_count=(previous.consecutive_failure_count if previous else 0) + 1,
+            metadata=previous.metadata if previous else {},
+        ),
+    )
+    conn.commit()
+
+
+def _redact_ripe_error(exc: BaseException) -> str:
+    message = str(exc)
+    api_key = os.environ.get("RIPE_ATLAS_API_KEY", "")
+    return message.replace(api_key, "REDACTED") if api_key else message
 
 
 def _acquire_lock(path: Path):

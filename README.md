@@ -57,6 +57,38 @@ python -m resonance.public_collector
 
 Do not place `EIA_API_KEY` in `config.toml`. Raw public responses are archived under `data/public/raw/eia_grid_monitor/YYYY/MM/DD/`, keyed by SHA-256, while per-fetch metadata is stored separately in SQLite. `python run_local.py` starts the personal/weather collector, public collector, and dashboard; when public EIA collection is disabled, the public collector exits cleanly without failing local startup.
 
+Optional regional Internet-health data uses anonymous RIPE Atlas API v2 reads against public built-in IPv4 ping measurements to root DNS servers. It is disabled by default and derives regional median RTT, p90 RTT, and packet-loss series from a deterministic nearby probe cohort:
+
+```toml
+[public_sources.ripe_atlas]
+enabled = false
+poll_interval_seconds = 900
+initial_backfill_hours = 168
+normal_lookback_hours = 6
+aggregation_seconds = 900
+finalization_delay_seconds = 600
+initial_radius_km = 150
+maximum_radius_km = 500
+desired_probe_count = 24
+minimum_probe_count = 8
+maximum_probes_per_asn = 2
+maximum_anchor_count = 4
+cohort_refresh_hours = 24
+result_chunk_hours = 6
+maximum_probe_batch_size = 50
+maximum_requests_per_poll = 200
+measurement_ids = [1001, 1004, 1009]
+```
+
+No RIPE Atlas key or credits are required. If `RIPE_ATLAS_API_KEY` is set, it is used only for authenticated read requests and is not persisted:
+
+```bash
+python -m resonance.public_sources.ripe_atlas status
+python -m resonance.public_sources.ripe_atlas probes
+python -m resonance.public_sources.ripe_atlas backfill --start 2026-06-01T00:00:00Z --end 2026-06-08T00:00:00Z
+python -m resonance.public_sources.ripe_atlas poll
+```
+
 Audit recent coverage and collector health:
 
 ```bash
@@ -252,6 +284,7 @@ All persistent data remains local except explicit outbound operations:
 - DNS lookup of the configured hostname.
 - Optional `ntfy` HTTP notifications when enabled.
 - Optional EIA Hourly Electric Grid Monitor requests when `[public_sources.eia_grid]` is enabled and `EIA_API_KEY` is present in the environment.
+- Optional RIPE Atlas API v2 requests when `[public_sources.ripe_atlas]` is enabled.
 - Optional LLM provider calls explicitly initiated by the user.
 
 The blind partition is architecturally sealed inside one local Python project; it is not protected from a machine owner who intentionally reads or edits the artifact files. Correlation thresholds are conservative prototype defaults, not proof of causality. See `docs/scientific_loop.md` and `AUDIT.md` for the exact integrity model and current limitations.

@@ -21,8 +21,9 @@ from resonance.analysis.service import (
     list_analyzable_metrics,
 )
 from resonance.config import ConfigError, load_config
-from resonance.public_health import eia_source_health_rows
-from resonance.public_sources.eia_grid import SOURCE_ID
+from resonance.public_health import eia_source_health_rows, ripe_source_health_rows
+from resonance.public_sources.eia_grid import SOURCE_ID as EIA_SOURCE_ID
+from resonance.public_sources.ripe_atlas import cohort_rows as ripe_cohort_rows
 from resonance.storage import (
     DEFAULT_DB_PATH,
     CorrelationFinding,
@@ -393,24 +394,65 @@ def _render_public_sources(conn, config, now_utc, local_tz: ZoneInfo, start_utc)
         now_utc=now_utc,
         credential_available=bool(os.environ.get("EIA_API_KEY")),
     )
+    rows.extend(
+        ripe_source_health_rows(
+            conn,
+            config=config.public_sources.ripe_atlas,
+            location=config.location,
+            now_utc=now_utc,
+        )
+    )
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
     chart_rows = _eia_chart_rows(conn, start_utc, now_utc, local_tz)
     if not chart_rows:
-        return
-    chart_df = pd.DataFrame(chart_rows)
-    fig = go.Figure()
-    for label, group in chart_df.groupby("series"):
-        fig.add_trace(
-            go.Scatter(
-                x=group["local_time"],
-                y=group["value"],
-                mode="lines+markers",
-                name=label,
+        pass
+    else:
+        chart_df = pd.DataFrame(chart_rows)
+        fig = go.Figure()
+        for label, group in chart_df.groupby("series"):
+            fig.add_trace(
+                go.Scatter(
+                    x=group["local_time"],
+                    y=group["value"],
+                    mode="lines+markers",
+                    name=label,
+                )
             )
+        fig.update_yaxes(title_text="MWh")
+        _show_chart(fig)
+
+    ripe_rows = _ripe_chart_rows(conn, start_utc, now_utc, local_tz)
+    if ripe_rows:
+        st.subheader("Regional Internet Health")
+        ripe_df = pd.DataFrame(ripe_rows)
+        fig = make_subplots(
+            rows=3,
+            cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.06,
+            subplot_titles=("Regional RTT", "Regional packet loss", "Coverage diagnostics"),
         )
-    fig.update_yaxes(title_text="MWh")
-    _show_chart(fig)
+        for series, label in (
+            ("ripe_atlas_ipv4_ping:regional:median_rtt_ms", "median RTT"),
+            ("ripe_atlas_ipv4_ping:regional:p90_rtt_ms", "p90 RTT"),
+        ):
+            group = ripe_df[ripe_df["series_id"] == series]
+            fig.add_trace(go.Scatter(x=group["local_time"], y=group["value"], mode="lines", name=label), row=1, col=1)
+        loss = ripe_df[ripe_df["series_id"] == "ripe_atlas_ipv4_ping:regional:packet_loss_fraction"]
+        fig.add_trace(go.Scatter(x=loss["local_time"], y=loss["value"], mode="lines", name="packet loss"), row=2, col=1)
+        for series, label in (
+            ("ripe_atlas_ipv4_ping:regional:responding_probe_fraction", "responding probes"),
+            ("ripe_atlas_ipv4_ping:regional:target_coverage_fraction", "target coverage"),
+        ):
+            group = ripe_df[ripe_df["series_id"] == series]
+            fig.add_trace(go.Scatter(x=group["local_time"], y=group["value"], mode="lines", name=label), row=3, col=1)
+        fig.update_yaxes(title_text="ms", row=1, col=1)
+        fig.update_yaxes(title_text="fraction", row=2, col=1)
+        fig.update_yaxes(title_text="fraction", row=3, col=1)
+        _show_chart(fig, height=700)
+    with st.expander("RIPE Atlas probe cohort"):
+        st.dataframe(pd.DataFrame(ripe_cohort_rows(conn)), use_container_width=True, hide_index=True)
 
 
 def _eia_chart_rows(conn, start_utc, end_utc, local_tz: ZoneInfo) -> list[dict[str, Any]]:
@@ -437,10 +479,55 @@ def _eia_chart_rows(conn, start_utc, end_utc, local_tz: ZoneInfo) -> list[dict[s
           )
         ORDER BY o.valid_start_utc ASC, s.display_name ASC
         """,
-        (SOURCE_ID, to_utc_iso(start_utc), to_utc_iso(end_utc)),
+        (EIA_SOURCE_ID, to_utc_iso(start_utc), to_utc_iso(end_utc)),
     ).fetchall()
     return [
         {
+            "series": row["display_name"],
+            "local_time": parse_utc(row["valid_start_utc"]).astimezone(local_tz),
+            "value": float(row["value"]),
+        }
+        for row in rows
+    ]
+
+
+def _ripe_chart_rows(conn, start_utc, end_utc, local_tz: ZoneInfo) -> list[dict[str, Any]]:
+    series = (
+        "ripe_atlas_ipv4_ping:regional:median_rtt_ms",
+        "ripe_atlas_ipv4_ping:regional:p90_rtt_ms",
+        "ripe_atlas_ipv4_ping:regional:packet_loss_fraction",
+        "ripe_atlas_ipv4_ping:regional:responding_probe_fraction",
+        "ripe_atlas_ipv4_ping:regional:target_coverage_fraction",
+    )
+    placeholders = ",".join("?" for _ in series)
+    rows = conn.execute(
+        f"""
+        SELECT o.series_id, s.display_name, o.valid_start_utc, o.value
+        FROM public_observations o
+        JOIN series_registry s ON s.series_id = o.series_id
+        WHERE o.series_id IN ({placeholders})
+          AND o.valid_start_utc >= ?
+          AND o.valid_start_utc <= ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM public_observations newer
+              WHERE newer.series_id = o.series_id
+                AND newer.source_observation_key = o.source_observation_key
+                AND (
+                    newer.ingested_at_utc > o.ingested_at_utc
+                    OR (
+                        newer.ingested_at_utc = o.ingested_at_utc
+                        AND newer.observation_id > o.observation_id
+                    )
+                )
+          )
+        ORDER BY o.valid_start_utc ASC, s.display_name ASC
+        """,
+        (*series, to_utc_iso(start_utc), to_utc_iso(end_utc)),
+    ).fetchall()
+    return [
+        {
+            "series_id": row["series_id"],
             "series": row["display_name"],
             "local_time": parse_utc(row["valid_start_utc"]).astimezone(local_tz),
             "value": float(row["value"]),

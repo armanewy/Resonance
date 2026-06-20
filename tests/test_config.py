@@ -39,6 +39,9 @@ def test_configuration_loading_and_validation(tmp_path) -> None:
     assert config.public_sources.eia_grid.initial_backfill_hours == 720
     assert config.public_sources.eia_grid.normal_lookback_hours == 72
     assert config.public_sources.eia_grid.maximum_gap_repair_hours == 2160
+    assert config.public_sources.ripe_atlas.enabled is False
+    assert config.public_sources.ripe_atlas.poll_interval_seconds == 900
+    assert config.public_sources.ripe_atlas.measurement_ids == (1001, 1004, 1009)
 
 
 def test_notification_configuration_loading(tmp_path) -> None:
@@ -80,6 +83,25 @@ poll_interval_seconds = 1800
 initial_backfill_hours = 24
 normal_lookback_hours = 12
 maximum_gap_repair_hours = 168
+
+[public_sources.ripe_atlas]
+enabled = true
+poll_interval_seconds = 600
+initial_backfill_hours = 48
+normal_lookback_hours = 4
+aggregation_seconds = 900
+finalization_delay_seconds = 300
+initial_radius_km = 100
+maximum_radius_km = 300
+desired_probe_count = 12
+minimum_probe_count = 6
+maximum_probes_per_asn = 1
+maximum_anchor_count = 2
+cohort_refresh_hours = 12
+result_chunk_hours = 3
+maximum_probe_batch_size = 25
+maximum_requests_per_poll = 50
+measurement_ids = [1001, 1004]
 """,
         encoding="utf-8",
     )
@@ -91,6 +113,9 @@ maximum_gap_repair_hours = 168
     assert config.public_sources.eia_grid.initial_backfill_hours == 24
     assert config.public_sources.eia_grid.normal_lookback_hours == 12
     assert config.public_sources.eia_grid.maximum_gap_repair_hours == 168
+    assert config.public_sources.ripe_atlas.enabled is True
+    assert config.public_sources.ripe_atlas.poll_interval_seconds == 600
+    assert config.public_sources.ripe_atlas.measurement_ids == (1001, 1004)
 
 
 def test_malformed_configuration_has_helpful_error(tmp_path) -> None:
@@ -128,4 +153,20 @@ poll_interval_seconds = 0
     )
 
     with pytest.raises(ConfigError, match="public_sources.eia_grid.poll_interval_seconds"):
+        load_config(path)
+
+
+def test_invalid_ripe_public_source_configuration_has_helpful_error(tmp_path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        VALID_CONFIG
+        + """
+[public_sources.ripe_atlas]
+initial_radius_km = 600
+maximum_radius_km = 500
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="initial_radius_km"):
         load_config(path)

@@ -5,6 +5,8 @@ from typing import Any
 
 from resonance.config import EiaGridPublicSourceConfig
 from resonance.public_sources.eia_grid import SOURCE_ID
+from resonance.config import LocationConfig, RipeAtlasPublicSourceConfig
+from resonance.public_sources.ripe_atlas import status_payload as ripe_status_payload
 from resonance.time_utils import ensure_utc, parse_utc, to_utc_iso
 
 
@@ -117,6 +119,32 @@ def eia_source_health_rows(
             "unresolved_gaps": health["unresolved_gap_count"],
             "rows_24h": health["rows_collected_last_24h"],
             "last_error": health["last_error"],
+            "failures": health["consecutive_failure_count"],
+        }
+    ]
+
+
+def ripe_source_health_rows(
+    conn,
+    *,
+    config: RipeAtlasPublicSourceConfig,
+    location: LocationConfig,
+    now_utc: datetime,
+) -> list[dict[str, Any]]:
+    health = ripe_status_payload(conn, config=config, location=location, now=now_utc)
+    return [
+        {
+            "source": health["source_name"],
+            "enabled": "yes" if health["enabled"] else "no",
+            "active_cohort": health["active_cohort_id"] or "none",
+            "probes": health["active_probe_count"],
+            "unique_asns": health["unique_asn_count"],
+            "radius_km": health["selected_radius_km"] or "n/a",
+            "latest_fetch": health["latest_result_fetch"] or "none",
+            "latest_finalized": health["latest_finalized_aggregate"] or "none",
+            "lag_hours": health["lag_hours"] if health["lag_hours"] is not None else "n/a",
+            "unresolved_gaps": health["unresolved_gap_count"],
+            "last_error": health["latest_error"],
             "failures": health["consecutive_failure_count"],
         }
     ]

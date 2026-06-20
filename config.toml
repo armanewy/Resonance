@@ -29,3 +29,22 @@ poll_interval_seconds = 3600
 initial_backfill_hours = 720
 normal_lookback_hours = 72
 maximum_gap_repair_hours = 2160
+
+[public_sources.ripe_atlas]
+enabled = false
+poll_interval_seconds = 900
+initial_backfill_hours = 168
+normal_lookback_hours = 6
+aggregation_seconds = 900
+finalization_delay_seconds = 600
+initial_radius_km = 150
+maximum_radius_km = 500
+desired_probe_count = 24
+minimum_probe_count = 8
+maximum_probes_per_asn = 2
+maximum_anchor_count = 4
+cohort_refresh_hours = 24
+result_chunk_hours = 6
+maximum_probe_batch_size = 50
+maximum_requests_per_poll = 200
+measurement_ids = [1001, 1004, 1009]
