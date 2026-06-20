@@ -46,11 +46,15 @@ class PairExplorerSelection:
 
 
 def metric_names(metrics: Iterable[AnalyzableMetric]) -> tuple[str, ...]:
-    return tuple(metric.metric for metric in sorted(metrics, key=lambda metric: metric.metric))
+    return tuple(metric_label(metric) for metric in sorted(metrics, key=metric_label))
 
 
 def metric_by_name(metrics: Iterable[AnalyzableMetric]) -> dict[str, AnalyzableMetric]:
-    return {metric.metric: metric for metric in metrics}
+    return {metric_label(metric): metric for metric in metrics}
+
+
+def metric_label(metric: AnalyzableMetric) -> str:
+    return metric.display_name or metric.metric
 
 
 def selected_transform(label: str) -> str:
@@ -91,7 +95,7 @@ def coverage_rows(analysis: MetricPairAnalysis) -> list[dict[str, Any]]:
         _coverage_row("Y", analysis.y_metric_summary, analysis.aligned_pair.y_coverage),
         {
             "Series": "Aligned pair",
-            "Metric": f"{analysis.aligned_pair.x_metric} / {analysis.aligned_pair.y_metric}",
+            "Metric": f"{metric_label(analysis.x_metric_summary)} / {metric_label(analysis.y_metric_summary)}",
             "Samples": len(analysis.aligned_pair.frame),
             "Coverage": "n/a",
             "Cadence": _format_duration(analysis.aligned_pair.cadence_seconds),
@@ -115,9 +119,15 @@ def evidence_statement(analysis: PairAnalysis) -> str:
     lag = analysis.lag_result
     if not _has_sufficient_evidence(analysis):
         return "Insufficient evidence for a stable association in this interval."
+    if isinstance(analysis, MetricPairAnalysis):
+        x_name = metric_label(analysis.x_metric_summary)
+        y_name = metric_label(analysis.y_metric_summary)
+    else:
+        x_name = analysis.aligned_pair.x_metric
+        y_name = analysis.aligned_pair.y_metric
     return (
-        f"Association: {analysis.aligned_pair.x_metric} and "
-        f"{analysis.aligned_pair.y_metric} align at {best_lag_label(lag.best_lag_seconds)}."
+        f"Association: {x_name} and "
+        f"{y_name} align at {best_lag_label(lag.best_lag_seconds)}."
     )
 
 
@@ -142,7 +152,7 @@ def _coverage_row(
     coverage = aligned_coverage if aligned_coverage is not None else summary.coverage
     return {
         "Series": series_label,
-        "Metric": summary.metric,
+        "Metric": metric_label(summary),
         "Samples": summary.sample_count,
         "Coverage": _format_percent(coverage),
         "Cadence": _format_duration(summary.cadence_seconds) if summary.cadence_seconds else "n/a",
@@ -204,6 +214,7 @@ __all__ = [
     "evidence_statement",
     "max_lag_steps",
     "metric_by_name",
+    "metric_label",
     "metric_names",
     "pair_cadence_seconds",
     "selected_interval",

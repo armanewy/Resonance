@@ -5,7 +5,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 from resonance.time_utils import parse_utc, to_utc_iso
 
@@ -54,6 +54,65 @@ class CorrelationFinding:
     last_verified_utc: datetime
     status: str
     evidence: dict
+
+
+@dataclass(frozen=True)
+class PublicSource:
+    source_id: str
+    display_name: str
+    publisher: str
+    documentation_reference: str
+    license_summary: str
+    authentication_type: str
+    default_polling_cadence_seconds: int
+    quality_tier: str
+    enabled: bool
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class SeriesRecord:
+    series_id: str
+    source_id: str
+    metric_name: str
+    display_name: str
+    unit: str
+    cadence_seconds: int
+    aggregation: str
+    geography_type: str
+    geography_id: str
+    timezone: str
+    timestamp_semantics: str
+    parent_series_id: str | None
+    lineage_id: str
+    quality_tier: str
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PublicObservation:
+    series_id: str
+    valid_start_utc: datetime
+    valid_end_utc: datetime
+    observed_at_utc: datetime
+    ingested_at_utc: datetime
+    value: float
+    quality: str
+    source_revision: str
+    source_observation_key: str
+    raw_archive_sha256: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PublicRawArchive:
+    sha256: str
+    source_id: str
+    retrieved_at_utc: datetime
+    request_url: str
+    status_code: int | None
+    path: str
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 def connect(db_path: str | Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
@@ -125,6 +184,91 @@ def init_db(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS public_sources (
+            source_id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            publisher TEXT NOT NULL,
+            documentation_reference TEXT NOT NULL,
+            license_summary TEXT NOT NULL,
+            authentication_type TEXT NOT NULL,
+            default_polling_cadence_seconds INTEGER NOT NULL,
+            quality_tier TEXT NOT NULL,
+            enabled INTEGER NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS series_registry (
+            series_id TEXT PRIMARY KEY,
+            source_id TEXT NOT NULL,
+            metric_name TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            unit TEXT NOT NULL,
+            cadence_seconds INTEGER NOT NULL,
+            aggregation TEXT NOT NULL,
+            geography_type TEXT NOT NULL,
+            geography_id TEXT NOT NULL,
+            timezone TEXT NOT NULL,
+            timestamp_semantics TEXT NOT NULL,
+            parent_series_id TEXT,
+            lineage_id TEXT NOT NULL,
+            quality_tier TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(source_id) REFERENCES public_sources(source_id),
+            FOREIGN KEY(parent_series_id) REFERENCES series_registry(series_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS measurement_series_map (
+            source TEXT NOT NULL,
+            metric TEXT NOT NULL,
+            series_id TEXT NOT NULL,
+            PRIMARY KEY(source, metric),
+            FOREIGN KEY(series_id) REFERENCES series_registry(series_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS public_raw_archives (
+            sha256 TEXT PRIMARY KEY,
+            source_id TEXT NOT NULL,
+            retrieved_at_utc TEXT NOT NULL,
+            request_url TEXT NOT NULL,
+            status_code INTEGER,
+            path TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(source_id) REFERENCES public_sources(source_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS public_observations (
+            observation_id INTEGER PRIMARY KEY,
+            series_id TEXT NOT NULL,
+            valid_start_utc TEXT NOT NULL,
+            valid_end_utc TEXT NOT NULL,
+            observed_at_utc TEXT NOT NULL,
+            ingested_at_utc TEXT NOT NULL,
+            value REAL NOT NULL,
+            quality TEXT NOT NULL,
+            source_revision TEXT NOT NULL,
+            source_observation_key TEXT NOT NULL,
+            raw_archive_sha256 TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(series_id) REFERENCES series_registry(series_id),
+            FOREIGN KEY(raw_archive_sha256) REFERENCES public_raw_archives(sha256),
+            UNIQUE(series_id, source_observation_key, source_revision)
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE INDEX IF NOT EXISTS idx_measurements_metric_timestamp
         ON measurements(metric, timestamp_utc)
         """
@@ -166,6 +310,31 @@ def init_db(conn: sqlite3.Connection) -> None:
         ON correlation_findings(status, last_verified_utc)
         """
     )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_series_registry_source_geography
+        ON series_registry(source_id, geography_type, geography_id, cadence_seconds)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_public_observations_series_valid
+        ON public_observations(series_id, valid_start_utc, valid_end_utc)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_public_observations_key_ingested
+        ON public_observations(series_id, source_observation_key, ingested_at_utc)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_public_raw_archives_source_time
+        ON public_raw_archives(source_id, retrieved_at_utc)
+        """
+    )
+    _ensure_existing_measurement_series(conn)
     conn.commit()
 
 
@@ -176,8 +345,10 @@ def ensure_database(db_path: str | Path = DEFAULT_DB_PATH) -> sqlite3.Connection
 
 
 def insert_measurements(conn: sqlite3.Connection, measurements: Iterable[Measurement]) -> int:
+    pending = tuple(measurements)
+    _ensure_measurement_series(conn, pending)
     inserted = 0
-    for measurement in measurements:
+    for measurement in pending:
         metadata_json = json.dumps(measurement.metadata, sort_keys=True, separators=(",", ":"))
         try:
             conn.execute(
@@ -193,6 +364,186 @@ def insert_measurements(conn: sqlite3.Connection, measurements: Iterable[Measure
                     measurement.unit,
                     measurement.source,
                     metadata_json,
+                ),
+            )
+            inserted += 1
+        except sqlite3.IntegrityError:
+            continue
+    conn.commit()
+    return inserted
+
+
+def upsert_public_source(conn: sqlite3.Connection, source: PublicSource) -> None:
+    metadata_json = _json_dumps(source.metadata)
+    conn.execute(
+        """
+        INSERT INTO public_sources (
+            source_id,
+            display_name,
+            publisher,
+            documentation_reference,
+            license_summary,
+            authentication_type,
+            default_polling_cadence_seconds,
+            quality_tier,
+            enabled,
+            metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source_id) DO UPDATE SET
+            display_name = excluded.display_name,
+            publisher = excluded.publisher,
+            documentation_reference = excluded.documentation_reference,
+            license_summary = excluded.license_summary,
+            authentication_type = excluded.authentication_type,
+            default_polling_cadence_seconds = excluded.default_polling_cadence_seconds,
+            quality_tier = excluded.quality_tier,
+            enabled = excluded.enabled,
+            metadata_json = excluded.metadata_json
+        """,
+        (
+            source.source_id,
+            source.display_name,
+            source.publisher,
+            source.documentation_reference,
+            source.license_summary,
+            source.authentication_type,
+            int(source.default_polling_cadence_seconds),
+            source.quality_tier,
+            1 if source.enabled else 0,
+            metadata_json,
+        ),
+    )
+
+
+def upsert_series_record(conn: sqlite3.Connection, series: SeriesRecord) -> None:
+    metadata_json = _json_dumps(series.metadata)
+    conn.execute(
+        """
+        INSERT INTO series_registry (
+            series_id,
+            source_id,
+            metric_name,
+            display_name,
+            unit,
+            cadence_seconds,
+            aggregation,
+            geography_type,
+            geography_id,
+            timezone,
+            timestamp_semantics,
+            parent_series_id,
+            lineage_id,
+            quality_tier,
+            metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(series_id) DO UPDATE SET
+            source_id = excluded.source_id,
+            metric_name = excluded.metric_name,
+            display_name = excluded.display_name,
+            unit = excluded.unit,
+            cadence_seconds = excluded.cadence_seconds,
+            aggregation = excluded.aggregation,
+            geography_type = excluded.geography_type,
+            geography_id = excluded.geography_id,
+            timezone = excluded.timezone,
+            timestamp_semantics = excluded.timestamp_semantics,
+            parent_series_id = excluded.parent_series_id,
+            lineage_id = excluded.lineage_id,
+            quality_tier = excluded.quality_tier,
+            metadata_json = excluded.metadata_json
+        """,
+        (
+            series.series_id,
+            series.source_id,
+            series.metric_name,
+            series.display_name,
+            series.unit,
+            int(series.cadence_seconds),
+            series.aggregation,
+            series.geography_type,
+            series.geography_id,
+            series.timezone,
+            series.timestamp_semantics,
+            series.parent_series_id,
+            series.lineage_id,
+            series.quality_tier,
+            metadata_json,
+        ),
+    )
+
+
+def map_measurement_series(conn: sqlite3.Connection, *, source: str, metric: str, series_id: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO measurement_series_map (source, metric, series_id)
+        VALUES (?, ?, ?)
+        ON CONFLICT(source, metric) DO UPDATE SET series_id = excluded.series_id
+        """,
+        (source, metric, series_id),
+    )
+
+
+def record_public_raw_archive(conn: sqlite3.Connection, archive: PublicRawArchive) -> None:
+    conn.execute(
+        """
+        INSERT INTO public_raw_archives (
+            sha256, source_id, retrieved_at_utc, request_url, status_code, path, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(sha256) DO UPDATE SET
+            source_id = excluded.source_id,
+            retrieved_at_utc = excluded.retrieved_at_utc,
+            request_url = excluded.request_url,
+            status_code = excluded.status_code,
+            path = excluded.path,
+            metadata_json = excluded.metadata_json
+        """,
+        (
+            archive.sha256,
+            archive.source_id,
+            to_utc_iso(archive.retrieved_at_utc),
+            archive.request_url,
+            archive.status_code,
+            archive.path,
+            _json_dumps(archive.metadata),
+        ),
+    )
+
+
+def insert_public_observations(
+    conn: sqlite3.Connection,
+    observations: Iterable[PublicObservation],
+) -> int:
+    inserted = 0
+    for observation in observations:
+        try:
+            conn.execute(
+                """
+                INSERT INTO public_observations (
+                    series_id,
+                    valid_start_utc,
+                    valid_end_utc,
+                    observed_at_utc,
+                    ingested_at_utc,
+                    value,
+                    quality,
+                    source_revision,
+                    source_observation_key,
+                    raw_archive_sha256,
+                    metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    observation.series_id,
+                    to_utc_iso(observation.valid_start_utc),
+                    to_utc_iso(observation.valid_end_utc),
+                    to_utc_iso(observation.observed_at_utc),
+                    to_utc_iso(observation.ingested_at_utc),
+                    float(observation.value),
+                    observation.quality,
+                    observation.source_revision,
+                    observation.source_observation_key,
+                    observation.raw_archive_sha256,
+                    _json_dumps(observation.metadata),
                 ),
             )
             inserted += 1
@@ -459,3 +810,125 @@ def delete_measurements_by_source(conn: sqlite3.Connection, source: str) -> int:
     conn.commit()
     return int(cursor.rowcount)
 
+
+def _ensure_existing_measurement_series(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        """
+        SELECT source, metric, unit
+        FROM measurements
+        GROUP BY source, metric
+        ORDER BY source, metric
+        """
+    ).fetchall()
+    _ensure_measurement_series(
+        conn,
+        (
+            Measurement(
+                timestamp_utc=parse_utc("1970-01-01T00:00:00Z"),
+                metric=str(row["metric"]),
+                value=0.0,
+                unit=str(row["unit"]),
+                source=str(row["source"]),
+            )
+            for row in rows
+        ),
+    )
+
+
+def _ensure_measurement_series(
+    conn: sqlite3.Connection,
+    measurements: Iterable[Measurement],
+) -> None:
+    seen: set[tuple[str, str, str]] = set()
+    for measurement in measurements:
+        key = (measurement.source, measurement.metric, measurement.unit)
+        if key in seen:
+            continue
+        seen.add(key)
+        source = _measurement_source_record(measurement.source)
+        series = _measurement_series_record(
+            source=measurement.source,
+            metric=measurement.metric,
+            unit=measurement.unit,
+        )
+        upsert_public_source(conn, source)
+        upsert_series_record(conn, series)
+        map_measurement_series(conn, source=measurement.source, metric=measurement.metric, series_id=series.series_id)
+
+
+def _measurement_source_record(source: str) -> PublicSource:
+    source_id = _safe_identity(source)
+    if source == "personal":
+        return PublicSource(
+            source_id=source_id,
+            display_name="Local personal collector",
+            publisher="Resonance local collector",
+            documentation_reference="AGENTS.md#Repository Layout",
+            license_summary="Private local measurements; no public license.",
+            authentication_type="none",
+            default_polling_cadence_seconds=30,
+            quality_tier="local",
+            enabled=True,
+        )
+    if source == "open-meteo":
+        return PublicSource(
+            source_id=source_id,
+            display_name="Open-Meteo local weather",
+            publisher="Open-Meteo",
+            documentation_reference="https://open-meteo.com/en/docs",
+            license_summary="Open-Meteo public API terms; see upstream documentation.",
+            authentication_type="none",
+            default_polling_cadence_seconds=900,
+            quality_tier="public_reference",
+            enabled=True,
+        )
+    return PublicSource(
+        source_id=source_id,
+        display_name=source,
+        publisher=source,
+        documentation_reference="local measurement compatibility mapping",
+        license_summary="Unknown local measurement provenance.",
+        authentication_type="unknown",
+        default_polling_cadence_seconds=0,
+        quality_tier="compatibility",
+        enabled=True,
+    )
+
+
+def _measurement_series_record(*, source: str, metric: str, unit: str) -> SeriesRecord:
+    source_id = _safe_identity(source)
+    series_id = f"measurement:{source_id}:{_safe_identity(metric)}"
+    geography_type = "device" if source == "personal" else "configured_location"
+    geography_id = "local_machine" if source == "personal" else "configured_location"
+    cadence_seconds = 900 if source == "open-meteo" else 30 if source == "personal" else 0
+    return SeriesRecord(
+        series_id=series_id,
+        source_id=source_id,
+        metric_name=metric,
+        display_name=metric,
+        unit=unit,
+        cadence_seconds=cadence_seconds,
+        aggregation="instantaneous",
+        geography_type=geography_type,
+        geography_id=geography_id,
+        timezone="configured",
+        timestamp_semantics="measurement_timestamp",
+        parent_series_id=None,
+        lineage_id=series_id,
+        quality_tier="local" if source == "personal" else "public_reference" if source == "open-meteo" else "compatibility",
+        metadata={"compatibility_measurement_source": source},
+    )
+
+
+def _safe_identity(value: str) -> str:
+    cleaned = []
+    for char in value.strip().lower():
+        if char.isalnum() or char in ("_", "-", "."):
+            cleaned.append(char)
+        else:
+            cleaned.append("_")
+    return "".join(cleaned).strip("_") or "unknown"
+
+
+def _json_dumps(value: Mapping[str, Any]) -> str:
+    return json.dumps(dict(value), sort_keys=True, separators=(",", ":"))

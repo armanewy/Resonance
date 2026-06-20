@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import json
 import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -52,6 +53,11 @@ class AnalyzableMetric:
     start_utc: datetime | None
     end_utc: datetime | None
     warnings: tuple[str, ...] = ()
+    display_name: str | None = None
+    series_id: str | None = None
+    geography_type: str | None = None
+    geography_id: str | None = None
+    provenance: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -78,15 +84,21 @@ def list_analyzable_metrics(
             """,
             (to_utc_iso(start), to_utc_iso(end)),
         ).fetchall()
+        public_rows = _fetch_public_summary_rows(conn, start, end)
 
     grouped: dict[str, list[sqlite3.Row]] = {}
     for row in rows:
         grouped.setdefault(str(row["metric"]), []).append(row)
 
-    return tuple(
+    measurement_metrics = tuple(
         _metric_summary(metric, metric_rows, interval_start=start, interval_end=end)
         for metric, metric_rows in sorted(grouped.items())
     )
+    public_metrics = tuple(
+        _public_metric_summary(series_id, series_rows, interval_start=start, interval_end=end)
+        for series_id, series_rows in sorted(public_rows.items())
+    )
+    return tuple(sorted((*measurement_metrics, *public_metrics), key=lambda metric: metric.display_name or metric.metric))
 
 
 def analyze_metric_pair(
@@ -112,16 +124,13 @@ def analyze_metric_pair(
 
     with _connect_read_only(database_path) as conn:
         _require_measurements_table(conn)
-        rows = _fetch_metric_rows(conn, start, end, (x_metric, y_metric))
+        x_rows, x_summary = _fetch_analysis_rows(conn, start, end, x_metric)
+        y_rows, y_summary = _fetch_analysis_rows(conn, start, end, y_metric)
 
-    x_rows = [row for row in rows if row["metric"] == x_metric]
-    y_rows = [row for row in rows if row["metric"] == y_metric]
     if not x_rows or not y_rows:
         missing = [metric for metric, metric_rows in ((x_metric, x_rows), (y_metric, y_rows)) if not metric_rows]
         raise ValueError(f"no measurements for metric(s): {', '.join(missing)}")
 
-    x_summary = _metric_summary(x_metric, x_rows, interval_start=start, interval_end=end)
-    y_summary = _metric_summary(y_metric, y_rows, interval_start=start, interval_end=end)
     x_series = _series_from_rows(x_rows, x_metric)
     y_series = _series_from_rows(y_rows, y_metric)
 
@@ -220,6 +229,19 @@ def _require_measurements_table(conn: sqlite3.Connection) -> None:
         raise ValueError("measurements table not found")
 
 
+def _has_table(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table' AND name = ?
+        LIMIT 1
+        """,
+        (table,),
+    ).fetchone()
+    return row is not None
+
+
 def _normalize_interval(start_utc: datetime, end_utc: datetime) -> tuple[datetime, datetime]:
     start = ensure_utc(start_utc).replace(microsecond=0)
     end = ensure_utc(end_utc).replace(microsecond=0)
@@ -277,9 +299,78 @@ def _fetch_metric_rows(
     )
 
 
+def _fetch_analysis_rows(
+    conn: sqlite3.Connection,
+    start_utc: datetime,
+    end_utc: datetime,
+    identifier: str,
+) -> tuple[list[Mapping[str, Any]], AnalyzableMetric]:
+    if _is_registered_series(conn, identifier):
+        rows = _fetch_public_rows(conn, start_utc, end_utc, identifier)
+        summary = _public_metric_summary(identifier, rows, interval_start=start_utc, interval_end=end_utc)
+        return rows, summary
+    rows = [dict(row) for row in _fetch_metric_rows(conn, start_utc, end_utc, (identifier,))]
+    summary = _metric_summary(identifier, rows, interval_start=start_utc, interval_end=end_utc)
+    return rows, summary
+
+
+def _is_registered_series(conn: sqlite3.Connection, identifier: str) -> bool:
+    if not _has_table(conn, "series_registry"):
+        return False
+    row = conn.execute(
+        "SELECT 1 FROM series_registry WHERE series_id = ? LIMIT 1",
+        (identifier,),
+    ).fetchone()
+    return row is not None
+
+
+def _fetch_public_summary_rows(
+    conn: sqlite3.Connection,
+    start_utc: datetime,
+    end_utc: datetime,
+) -> dict[str, list[Mapping[str, Any]]]:
+    if not (_has_table(conn, "public_observations") and _has_table(conn, "series_registry")):
+        return {}
+    rows = conn.execute(
+        """
+        SELECT o.series_id, o.valid_start_utc AS timestamp_utc, o.value, o.quality,
+               o.source_revision, o.source_observation_key, s.source_id AS source,
+               s.unit, s.display_name, s.geography_type, s.geography_id,
+               s.lineage_id, s.cadence_seconds, s.quality_tier, s.metadata_json
+        FROM public_observations o
+        JOIN series_registry s ON s.series_id = o.series_id
+        WHERE o.valid_start_utc >= ?
+          AND o.valid_start_utc <= ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM public_observations newer
+              WHERE newer.series_id = o.series_id
+                AND newer.source_observation_key = o.source_observation_key
+                AND newer.ingested_at_utc > o.ingested_at_utc
+          )
+        ORDER BY s.display_name ASC, o.valid_start_utc ASC
+        """,
+        (to_utc_iso(start_utc), to_utc_iso(end_utc)),
+    ).fetchall()
+    grouped: dict[str, list[Mapping[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(str(row["series_id"]), []).append(dict(row))
+    return grouped
+
+
+def _fetch_public_rows(
+    conn: sqlite3.Connection,
+    start_utc: datetime,
+    end_utc: datetime,
+    series_id: str,
+) -> list[Mapping[str, Any]]:
+    grouped = _fetch_public_summary_rows(conn, start_utc, end_utc)
+    return grouped.get(series_id, [])
+
+
 def _metric_summary(
     metric: str,
-    rows: Sequence[sqlite3.Row],
+    rows: Sequence[Mapping[str, Any]],
     *,
     interval_start: datetime,
     interval_end: datetime,
@@ -309,10 +400,62 @@ def _metric_summary(
         start_utc=timestamps[0] if timestamps else None,
         end_utc=timestamps[-1] if timestamps else None,
         warnings=tuple(warnings),
+        display_name=metric,
     )
 
 
-def _timestamps_from_rows(rows: Sequence[sqlite3.Row]) -> list[datetime]:
+def _public_metric_summary(
+    series_id: str,
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    interval_start: datetime,
+    interval_end: datetime,
+) -> AnalyzableMetric:
+    timestamps = _timestamps_from_rows(rows)
+    first = rows[0] if rows else {}
+    cadence_seconds = int(first["cadence_seconds"]) if first.get("cadence_seconds") is not None else _infer_cadence_seconds(timestamps)
+    units = tuple(sorted({str(row["unit"]) for row in rows if row.get("unit") is not None}))
+    sources = tuple(sorted({str(row["source"]) for row in rows if row.get("source") is not None}))
+    warnings: list[str] = []
+    if not rows:
+        coverage = None
+        warnings.append(f"{series_id} has no public observations in this interval")
+    elif cadence_seconds is None or cadence_seconds <= 0:
+        coverage = None
+        warnings.append(f"{series_id} cadence could not be inferred")
+    else:
+        coverage = _coverage(timestamps, cadence_seconds, interval_start, interval_end)
+    display_name = str(first.get("display_name") or series_id)
+    geography_type = str(first.get("geography_type") or "") or None
+    geography_id = str(first.get("geography_id") or "") or None
+    if geography_id:
+        display_name = f"{display_name} [{geography_id}]"
+    return AnalyzableMetric(
+        metric=series_id,
+        units=units,
+        sources=sources,
+        sample_count=len(rows),
+        cadence_seconds=cadence_seconds,
+        coverage=coverage,
+        start_utc=timestamps[0] if timestamps else None,
+        end_utc=timestamps[-1] if timestamps else None,
+        warnings=tuple(warnings),
+        display_name=display_name,
+        series_id=series_id,
+        geography_type=geography_type,
+        geography_id=geography_id,
+        provenance={
+            "source_id": first.get("source"),
+            "lineage_id": first.get("lineage_id"),
+            "quality_tier": first.get("quality_tier"),
+            "metadata": json.loads(str(first.get("metadata_json") or "{}")),
+        }
+        if first
+        else None,
+    )
+
+
+def _timestamps_from_rows(rows: Sequence[Mapping[str, Any]]) -> list[datetime]:
     timestamps = []
     for row in rows:
         try:
@@ -353,7 +496,7 @@ def _coverage(
     return min(1.0, len(bins) / expected_count)
 
 
-def _series_from_rows(rows: Sequence[sqlite3.Row], metric: str) -> pd.Series:
+def _series_from_rows(rows: Sequence[Mapping[str, Any]], metric: str) -> pd.Series:
     timestamps: list[datetime] = []
     values: list[float] = []
     for row in rows:

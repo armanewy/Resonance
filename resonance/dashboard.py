@@ -434,12 +434,15 @@ def _render_pair_explorer(database_path, now_utc) -> None:
     summaries_by_name = metric_by_name(metric_summaries)
     with st.form("pair_explorer_form"):
         columns = st.columns(4)
-        x_metric = columns[0].selectbox("X metric", names, index=0)
-        y_metric = columns[1].selectbox("Y metric", names, index=1)
+        x_metric_label = columns[0].selectbox("X metric", names, index=0)
+        y_metric_label = columns[1].selectbox("Y metric", names, index=1)
         transform_label = columns[2].selectbox("Transform", list(PAIR_TRANSFORMS.keys()), index=0)
         max_lag_label = columns[3].selectbox("Maximum lag", list(PAIR_MAX_LAGS.keys()), index=3)
         submitted = st.form_submit_button("Analyze")
 
+    x_metric = summaries_by_name[x_metric_label].metric
+    y_metric = summaries_by_name[y_metric_label].metric
+    summaries_by_metric = {summary.metric: summary for summary in metric_summaries}
     selection = PairExplorerSelection(
         x_metric=x_metric,
         y_metric=y_metric,
@@ -448,7 +451,7 @@ def _render_pair_explorer(database_path, now_utc) -> None:
         max_lag_label=max_lag_label,
     )
     if submitted:
-        _run_pair_explorer_analysis(database_path, start_utc, now_utc, summaries_by_name, selection)
+        _run_pair_explorer_analysis(database_path, start_utc, now_utc, summaries_by_metric, selection)
 
     result = st.session_state.get("pair_explorer_result")
     if not result or result.get("selection") != selection:
@@ -741,4 +744,3 @@ def _evidence_optional_float(evidence: Mapping[str, Any], key: str) -> float | N
 
 if __name__ == "__main__":
     main()
-

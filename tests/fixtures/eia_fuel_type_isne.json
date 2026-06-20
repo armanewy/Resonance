@@ -1,0 +1,42 @@
+{
+  "response": {
+    "data": [
+      {
+        "period": "2026-06-19T00",
+        "respondent": "ISNE",
+        "respondent-name": "ISO New England",
+        "fueltype": "NG",
+        "fueltype-name": "Natural Gas",
+        "value": "9100",
+        "value-units": "megawatthours"
+      },
+      {
+        "period": "2026-06-19T00",
+        "respondent": "ISNE",
+        "respondent-name": "ISO New England",
+        "fueltype": "WND",
+        "fueltype-name": "Wind",
+        "value": "1200",
+        "value-units": "megawatthours"
+      },
+      {
+        "period": "2026-06-19T01",
+        "respondent": "ISNE",
+        "respondent-name": "ISO New England",
+        "fueltype": "NG",
+        "fueltype-name": "Natural Gas",
+        "value": "8800",
+        "value-units": "megawatthours"
+      },
+      {
+        "period": "2026-06-19T01",
+        "respondent": "ISNE",
+        "respondent-name": "ISO New England",
+        "fueltype": "WND",
+        "fueltype-name": "Wind",
+        "value": "1300",
+        "value-units": "megawatthours"
+      }
+    ]
+  }
+}

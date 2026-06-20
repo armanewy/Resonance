@@ -40,6 +40,18 @@ def test_metric_helpers_sort_and_lookup_metric_summaries() -> None:
     assert metric_by_name([tcp, cpu]) == {"tcp_latency_ms": tcp, "cpu_percent": cpu}
 
 
+def test_metric_helpers_display_public_labels_but_return_internal_series() -> None:
+    grid = _summary(
+        "eia_grid_monitor:ISNE:system_load",
+        display_name="ISO New England system load [ISNE]",
+    )
+    temp = _summary("weather_temperature_c")
+
+    assert metric_names([grid, temp]) == ("ISO New England system load [ISNE]", "weather_temperature_c")
+    by_label = metric_by_name([grid, temp])
+    assert by_label["ISO New England system load [ISNE]"].metric == "eia_grid_monitor:ISNE:system_load"
+
+
 def test_pair_cadence_and_max_lag_steps_are_explicit() -> None:
     x_summary = _summary("tcp_latency_ms", cadence_seconds=300)
     y_summary = _summary("cpu_percent", cadence_seconds=600)
@@ -106,7 +118,11 @@ def test_insufficient_evidence_statement_is_allowed() -> None:
     assert evidence_statement(analysis) == "Insufficient evidence for a stable association in this interval."
 
 
-def _summary(metric: str, cadence_seconds: int | None = 300) -> AnalyzableMetric:
+def _summary(
+    metric: str,
+    cadence_seconds: int | None = 300,
+    display_name: str | None = None,
+) -> AnalyzableMetric:
     return AnalyzableMetric(
         metric=metric,
         units=("unit",),
@@ -116,6 +132,7 @@ def _summary(metric: str, cadence_seconds: int | None = 300) -> AnalyzableMetric
         coverage=0.9,
         start_utc=_ts(0),
         end_utc=_ts(2),
+        display_name=display_name,
     )
 
 

@@ -1,0 +1,60 @@
+{
+  "response": {
+    "data": [
+      {
+        "period": "2026-06-19T00",
+        "respondent": "ISNE",
+        "respondent-name": "ISO New England",
+        "type": "D",
+        "type-name": "Demand",
+        "value": "14200",
+        "value-units": "megawatthours"
+      },
+      {
+        "period": "2026-06-19T00",
+        "respondent": "ISNE",
+        "respondent-name": "ISO New England",
+        "type": "DF",
+        "type-name": "Demand Forecast",
+        "value": "14050",
+        "value-units": "megawatthours"
+      },
+      {
+        "period": "2026-06-19T00",
+        "respondent": "ISNE",
+        "respondent-name": "ISO New England",
+        "type": "TI",
+        "type-name": "Total Interchange",
+        "value": "-850",
+        "value-units": "megawatthours"
+      },
+      {
+        "period": "2026-06-19T01",
+        "respondent": "ISNE",
+        "respondent-name": "ISO New England",
+        "type": "D",
+        "type-name": "Demand",
+        "value": "13900",
+        "value-units": "megawatthours"
+      },
+      {
+        "period": "2026-06-19T01",
+        "respondent": "ISNE",
+        "respondent-name": "ISO New England",
+        "type": "DF",
+        "type-name": "Demand Forecast",
+        "value": "13800",
+        "value-units": "megawatthours"
+      },
+      {
+        "period": "2026-06-19T01",
+        "respondent": "NYIS",
+        "respondent-name": "New York Independent System Operator",
+        "type": "D",
+        "type-name": "Demand",
+        "value": "18000",
+        "value-units": "megawatthours"
+      }
+    ]
+  }
+}
