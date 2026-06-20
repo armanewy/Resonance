@@ -186,6 +186,24 @@ The CLI records proposal, fit, tuning, preregistration, blind evaluation, and
 report artifacts in the ledger. Blind evaluation remains one-shot per
 preregistration, and reports include the exact snapshot and code versions.
 
+### LLM Hypothesis Imagination Flow
+
+The imagination flow proposes hypotheses from an exploration-only
+`DiscoveryBrief`, runs deterministic skeptical review, and requires explicit
+human approval before fitting:
+
+```powershell
+python -m resonance.science.cli imagine --snapshot SNAPSHOT_ID --provider mock --max-hypotheses 8
+python -m resonance.science.cli review RUN_ID
+python -m resonance.science.cli review RUN_ID --approve HYPOTHESIS_INDEX_OR_HASH
+python -m resonance.science.cli fit-approved RUN_ID
+```
+
+`fit-approved` fits approved proposals on exploration and compares them on
+tuning, selecting at most one default candidate. It does not preregister or run
+blind evaluation; use the existing `preregister`, `blind-evaluate`, and
+`report` commands for those sealed steps.
+
 ### Optional Hypothesis Providers
 
 Science provider adapters are library-level helpers for proposing structured

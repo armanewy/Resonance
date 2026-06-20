@@ -18,6 +18,13 @@ from resonance.science.blind_evaluator import (
 from resonance.science.contracts import HypothesisSpec, stable_hash
 from resonance.science.fitting import EVALUATOR_VERSION as FITTING_VERSION
 from resonance.science.fitting import FittingError, fit_hypothesis
+from resonance.science.imagination import (
+    DEFAULT_IMAGINATION_SEED,
+    ImaginationError,
+    fit_approved,
+    imagine_hypotheses,
+    review_imagination_run,
+)
 from resonance.science.interpreter import frame_from_snapshot_rows
 from resonance.science.ledger import (
     DEFAULT_LEDGER_PATH,
@@ -67,6 +74,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         BlindEvaluationError,
         FileNotFoundError,
         FittingError,
+        ImaginationError,
         ScienceCliError,
         SelectionError,
         ValidationError,
@@ -142,6 +150,23 @@ def _parser() -> argparse.ArgumentParser:
 
     tune = subparsers.add_parser("tune", help="evaluate a fitted candidate on tuning data")
     tune.add_argument("--run", required=True, dest="run_id")
+
+    imagine = subparsers.add_parser("imagine", help="propose and review hypotheses from exploration only")
+    imagine.add_argument("--snapshot", required=True, dest="snapshot_id")
+    imagine.add_argument("--provider", required=True, choices=("mock", "file"))
+    imagine.add_argument("--provider-file", help="JSON proposal file for --provider file")
+    imagine.add_argument("--max-hypotheses", type=int, default=8)
+    imagine.add_argument("--seed", type=int, default=DEFAULT_IMAGINATION_SEED)
+
+    review = subparsers.add_parser("review", help="show or approve an imagination run")
+    review.add_argument("run_id")
+    review.add_argument("--approve", help="proposal index, candidate id, or hypothesis hash to approve")
+
+    fit_approved_parser = subparsers.add_parser(
+        "fit-approved",
+        help="fit approved imagination proposals on exploration and tune them",
+    )
+    fit_approved_parser.add_argument("run_id")
 
     preregister = subparsers.add_parser("preregister", help="freeze a tuned candidate before blind access")
     preregister.add_argument("--candidate", required=True, dest="candidate_id")
@@ -293,6 +318,29 @@ def _dispatch(args: argparse.Namespace) -> dict[str, Any] | None:
             ledger_path=ledger_path,
         )
         return selection.to_dict()
+    if args.command == "imagine":
+        return imagine_hypotheses(
+            snapshot_id=args.snapshot_id,
+            provider_name=args.provider,
+            max_hypotheses=args.max_hypotheses,
+            seed=args.seed,
+            provider_file=args.provider_file,
+            artifact_root=artifact_root,
+            ledger_path=ledger_path,
+        )
+    if args.command == "review":
+        return review_imagination_run(
+            args.run_id,
+            approve=args.approve,
+            artifact_root=artifact_root,
+            ledger_path=ledger_path,
+        )
+    if args.command == "fit-approved":
+        return fit_approved(
+            args.run_id,
+            artifact_root=artifact_root,
+            ledger_path=ledger_path,
+        )
     if args.command == "preregister":
         return _preregister_candidate(args.candidate_id, artifact_root, ledger_path)
     if args.command == "blind-evaluate":
@@ -519,7 +567,7 @@ def _latest_tuning_entry(candidate_id: str, ledger_path: Path) -> dict[str, Any]
             continue
         payload = entry["payload"]
         if (
-            payload.get("interpretation_type") == "tuning_selection"
+            payload.get("interpretation_type") in {"tuning_selection", "imagination_tuning_selection"}
             and payload.get("candidate_id") == candidate_id
         ):
             return entry
