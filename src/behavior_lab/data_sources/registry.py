@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from behavior_lab.core import parse_time, stable_hash
+
 
 class DataSourceError(ValueError):
     pass
@@ -22,6 +24,7 @@ class DataSource:
     evidence_class: str
     integration_requirements: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    requires_authorization_evidence: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -33,9 +36,85 @@ class PermissionCheck:
     use: str
     allowed: bool
     reason: str
+    authorization_evidence_verified: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class AuthorizationEvidence:
+    source_id: str
+    authorization_id: str
+    owner_subject_hash: str
+    authorized_at: str
+    scopes: list[str]
+    ledger_record_hash: str
+    evidence_hash: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        source_id: str,
+        authorization_id: str,
+        owner_subject_hash: str,
+        authorized_at: str,
+        scopes: list[str],
+        ledger_record_hash: str,
+    ) -> "AuthorizationEvidence":
+        body = {
+            "source_id": source_id,
+            "authorization_id": authorization_id,
+            "owner_subject_hash": owner_subject_hash,
+            "authorized_at": authorized_at,
+            "scopes": sorted(set(scopes)),
+            "ledger_record_hash": ledger_record_hash,
+        }
+        return cls(**body, evidence_hash=stable_hash(body))
+
+
+def validate_authorization_evidence(
+    evidence: AuthorizationEvidence | dict[str, Any],
+    *,
+    expected_source_id: str,
+) -> AuthorizationEvidence:
+    payload = evidence.to_dict() if isinstance(evidence, AuthorizationEvidence) else dict(evidence)
+    required = {
+        "source_id",
+        "authorization_id",
+        "owner_subject_hash",
+        "authorized_at",
+        "scopes",
+        "ledger_record_hash",
+        "evidence_hash",
+    }
+    missing = required - set(payload)
+    if missing:
+        raise DataSourceError(f"authorization evidence is missing fields: {sorted(missing)}")
+    if payload["source_id"] != expected_source_id:
+        raise DataSourceError("authorization evidence source_id does not match the data source")
+    for key in ["authorization_id", "owner_subject_hash", "ledger_record_hash"]:
+        if not isinstance(payload[key], str) or not payload[key].strip():
+            raise DataSourceError(f"authorization evidence {key} must be non-empty")
+    parse_time(str(payload["authorized_at"]))
+    scopes = payload["scopes"]
+    if not isinstance(scopes, list) or not scopes or any(not isinstance(item, str) or not item.strip() for item in scopes):
+        raise DataSourceError("authorization evidence scopes must be a non-empty list of strings")
+    normalized = {
+        "source_id": str(payload["source_id"]),
+        "authorization_id": str(payload["authorization_id"]),
+        "owner_subject_hash": str(payload["owner_subject_hash"]),
+        "authorized_at": str(payload["authorized_at"]),
+        "scopes": sorted(set(str(item) for item in scopes)),
+        "ledger_record_hash": str(payload["ledger_record_hash"]),
+    }
+    if stable_hash(normalized) != str(payload["evidence_hash"]):
+        raise DataSourceError("authorization evidence hash mismatch")
+    return AuthorizationEvidence(**normalized, evidence_hash=str(payload["evidence_hash"]))
 
 
 class SourceRegistry:
@@ -59,26 +138,72 @@ class SourceRegistry:
     def inspect(self, source_id: str) -> dict[str, Any]:
         return self.get(source_id).to_dict()
 
-    def permissions(self, source_id: str) -> dict[str, Any]:
+    def permissions(
+        self,
+        source_id: str,
+        *,
+        authorization_evidence: AuthorizationEvidence | dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         source = self.get(source_id)
         return {
             "source_id": source.source_id,
             "license_status": source.license_status,
+            "requires_authorization_evidence": source.requires_authorization_evidence,
             "allowed_uses": dict(sorted(source.allowed_uses.items())),
-            "production_export_allowed": self.check(source_id, "production_export").allowed,
+            "production_export_allowed": self.check(
+                source_id,
+                "production_export",
+                authorization_evidence=authorization_evidence,
+            ).allowed,
         }
 
-    def check(self, source_id: str, use: str) -> PermissionCheck:
+    def check(
+        self,
+        source_id: str,
+        use: str,
+        *,
+        authorization_evidence: AuthorizationEvidence | dict[str, Any] | None = None,
+    ) -> PermissionCheck:
         source = self.get(source_id)
         allowed = bool(source.allowed_uses.get(use, False))
         commercial_uses = {"commercial_training", "production_inference", "production_export"}
-        if allowed and (use not in commercial_uses or source.license_status == "confirmed"):
-            return PermissionCheck(source_id, use, True, "use allowed by registered source policy")
-        if allowed:
+        if not allowed:
+            return PermissionCheck(source_id, use, False, f"use {use!r} is not allowed for {source_id!r}")
+        if use in commercial_uses and source.license_status != "confirmed":
             return PermissionCheck(source_id, use, False, f"license status is {source.license_status!r}, not confirmed")
-        return PermissionCheck(source_id, use, False, f"use {use!r} is not allowed for {source_id!r}")
+        evidence_verified = False
+        if use in commercial_uses and source.requires_authorization_evidence:
+            if authorization_evidence is None:
+                return PermissionCheck(
+                    source_id,
+                    use,
+                    False,
+                    "commercial use requires immutable account-authorization evidence",
+                )
+            try:
+                validate_authorization_evidence(
+                    authorization_evidence,
+                    expected_source_id=source_id,
+                )
+            except (DataSourceError, ValueError) as exc:
+                return PermissionCheck(source_id, use, False, f"invalid authorization evidence: {exc}")
+            evidence_verified = True
+        return PermissionCheck(
+            source_id,
+            use,
+            True,
+            "use allowed by registered source policy"
+            + (" and verified authorization evidence" if evidence_verified else ""),
+            authorization_evidence_verified=evidence_verified,
+        )
 
-    def verify_lineage(self, source_ids: list[str], requested_use: str) -> dict[str, Any]:
+    def verify_lineage(
+        self,
+        source_ids: list[str],
+        requested_use: str,
+        *,
+        authorization_evidence_by_source: dict[str, AuthorizationEvidence | dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         if not source_ids:
             return {
                 "requested_use": requested_use,
@@ -86,7 +211,15 @@ class SourceRegistry:
                 "checks": [],
                 "reason": "lineage must contain at least one source dataset",
             }
-        checks = [self.check(source_id, requested_use) for source_id in source_ids]
+        evidence_map = authorization_evidence_by_source or {}
+        checks = [
+            self.check(
+                source_id,
+                requested_use,
+                authorization_evidence=evidence_map.get(source_id),
+            )
+            for source_id in source_ids
+        ]
         return {
             "requested_use": requested_use,
             "allowed": all(check.allowed for check in checks),
@@ -101,7 +234,14 @@ class SourceRegistry:
         if not source_ids:
             raise DataSourceError("manifest source_dataset_ids may not be empty")
         requested_use = str(payload.get("requested_use", "internal_benchmarking"))
-        return self.verify_lineage(source_ids, requested_use)
+        evidence = payload.get("authorization_evidence_by_source")
+        if evidence is not None and not isinstance(evidence, dict):
+            raise DataSourceError("authorization_evidence_by_source must be an object")
+        return self.verify_lineage(
+            source_ids,
+            requested_use,
+            authorization_evidence_by_source=evidence,
+        )
 
 
 def default_sources() -> list[DataSource]:
@@ -196,8 +336,14 @@ def default_sources() -> list[DataSource]:
             source_url="https://developer.ebay.com/",
             allowed_uses=authorized_commercial,
             evidence_class="authorized seller production data",
-            integration_requirements=["OAuth consent", "official APIs only", "seller cost-basis import"],
-            notes=["Only source class allowed for production OfferLab models in this registry."],
+            integration_requirements=[
+                "OAuth consent",
+                "official APIs only",
+                "seller cost-basis import",
+                "immutable authorization evidence",
+            ],
+            notes=["Production permission is granted only when an immutable authorization record is supplied."],
+            requires_authorization_evidence=True,
         ),
     ]
 

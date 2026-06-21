@@ -10,7 +10,7 @@ import unittest
 from behavior_lab.benchmarks.contracts import ArtifactLineage, BenchmarkManifest, validate_manifest
 from behavior_lab.benchmarks.contracts import BenchmarkContractError
 from behavior_lab.data_sources.cache import ContentAddressedCache
-from behavior_lab.data_sources.registry import default_registry
+from behavior_lab.data_sources.registry import AuthorizationEvidence, default_registry
 
 
 class DataSourceRegistryTests(unittest.TestCase):
@@ -18,7 +18,22 @@ class DataSourceRegistryTests(unittest.TestCase):
         registry = default_registry()
         self.assertFalse(registry.check("nber_ebay_best_offer", "production_export").allowed)
         self.assertFalse(registry.check("criteo_uplift", "production_export").allowed)
-        self.assertTrue(registry.check("current_ebay_authorized_data", "production_export").allowed)
+        self.assertFalse(registry.check("current_ebay_authorized_data", "production_export").allowed)
+        evidence = AuthorizationEvidence.create(
+            source_id="current_ebay_authorized_data",
+            authorization_id="auth-test",
+            owner_subject_hash="owner-hash",
+            authorized_at="2026-06-21T12:00:00+00:00",
+            scopes=["sell.fulfillment.readonly"],
+            ledger_record_hash="ledger-hash",
+        )
+        self.assertTrue(
+            registry.check(
+                "current_ebay_authorized_data",
+                "production_export",
+                authorization_evidence=evidence,
+            ).allowed
+        )
 
     def test_lineage_verification_blocks_mixed_restricted_sources(self) -> None:
         result = default_registry().verify_lineage(["nber_ebay_best_offer", "current_ebay_authorized_data"], "production_export")

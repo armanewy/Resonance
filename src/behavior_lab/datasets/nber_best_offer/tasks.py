@@ -74,12 +74,18 @@ def buyer_response_to_counter(listings: dict[str, dict[str, Any]], threads: dict
 def agreement_task(listings: dict[str, dict[str, Any]], threads: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
     rows = []
     for thread_id, turns in threads.items():
+        label = agreement_label(turns)
+        # A truncated observation window is not evidence of failed agreement.
+        # Censored threads remain available to dataset audits but do not become
+        # supervised negative labels.
+        if label is None:
+            continue
         first = turns[0]
         listing = listings[str(first["listing_id"])]
         rows.append(
             _snapshot(
                 task="agreement",
-                label="1" if any(turn["action"] == "accept" for turn in turns) else "0",
+                label=label,
                 listing=listing,
                 turn=first,
                 history=[first],
@@ -87,6 +93,21 @@ def agreement_task(listings: dict[str, dict[str, Any]], threads: dict[str, list[
             )
         )
     return rows
+
+
+def agreement_label(turns: list[dict[str, Any]]) -> str | None:
+    if any(str(turn.get("action", "")).lower() == "accept" for turn in turns):
+        return "1"
+    if not turns:
+        return None
+    last = turns[-1]
+    action = str(last.get("action", "")).lower()
+    status = str(last.get("status", "")).lower()
+    terminal_negative_actions = {"decline", "expire", "leave", "reject", "quit"}
+    terminal_negative_statuses = {"declined", "expired", "rejected", "closed_no_agreement"}
+    if action in terminal_negative_actions or status in terminal_negative_statuses:
+        return "0"
+    return None
 
 
 def final_price_ratio_task(listings: dict[str, dict[str, Any]], threads: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:

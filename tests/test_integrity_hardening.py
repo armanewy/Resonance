@@ -359,7 +359,7 @@ class IntegrityHardeningTests(unittest.TestCase):
 
         project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
         declared = project["project"]["version"]
-        self.assertEqual(declared, "0.3.0")
+        self.assertEqual(declared, "0.4.0")
         self.assertEqual(behavior_lab.__version__, declared)
         self.assertEqual(SOFTWARE_VERSION, declared)
 

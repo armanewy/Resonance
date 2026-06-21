@@ -11,7 +11,7 @@ from behavior_lab.evaluation import evaluate_model
 from behavior_lab.temporal import feature_catalog
 
 MODEL_ARTIFACT_VERSION = 2
-SOFTWARE_VERSION = "0.3.0"
+SOFTWARE_VERSION = "0.4.0"
 
 
 def sigmoid(value: float) -> float:

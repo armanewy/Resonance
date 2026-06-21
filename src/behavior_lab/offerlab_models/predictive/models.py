@@ -335,9 +335,6 @@ def predictive_suite(
     *,
     hidden_lockbox_id: str | None = None,
 ) -> dict[str, Any]:
-    for split_name, rows in [("train", train), ("development", development), ("hidden", hidden)]:
-        for row in rows:
-            row["split"] = split_name
     if task_name in {"final_price_ratio", "response_latency"}:
         return _regression_suite(task_name, train, development, hidden, hidden_lockbox_id=hidden_lockbox_id)
     return _classification_suite(task_name, train, development, hidden, hidden_lockbox_id=hidden_lockbox_id)

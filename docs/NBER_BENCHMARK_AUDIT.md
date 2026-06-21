@@ -4,7 +4,7 @@ The NBER lane is the primary public evidence campaign for OfferLab. It must answ
 
 ## Required Controls
 
-- Chronological split.
+- Chronological split with complete negotiation threads confined to one region; threads crossing a boundary are purged and reported.
 - Seller-disjoint split where seller identifiers are available.
 - Category breakdown.
 - Future-round leakage check.
@@ -21,7 +21,7 @@ The repository implements a fixture-sized NBER path:
 - `nber-best-offer benchmark`
 - `nber-best-offer audit`
 
-The normalizer emits JSONL partition tables as a standard-library fallback. Full-scale parquet output should be added only with an optional dependency group after the acquisition path is exercised on real files.
+The current normalizer supports the repository fixture schema (`listings.csv` and `turns.csv`) and emits JSONL partition tables as a standard-library fallback. It does **not** yet map the official full NBER release schema. Full-release normalization requires a codebook-driven adapter and should use an optional streaming/Parquet dependency group.
 
 ## Interpretation
 

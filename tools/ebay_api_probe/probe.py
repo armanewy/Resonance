@@ -88,7 +88,7 @@ class EbayApiProbe:
         requests = [
             ProbeRequest("seller_owned_best_offers", "/ws/api.dll?callname=GetBestOffers", {"item_id": seller_owned_listing_id}),
             ProbeRequest("buyer_participated_best_offers", "/ws/api.dll?callname=GetBestOffers", {"item_id": buyer_participated_listing_id}),
-            ProbeRequest("unrelated_best_offers_denied", "/ws/api.dll?callname=GetBestOffers", {"item_id": unrelated_listing_id}),
+            ProbeRequest("unrelated_best_offers_probe", "/ws/api.dll?callname=GetBestOffers", {"item_id": unrelated_listing_id}),
             ProbeRequest("inventory_read", "/sell/inventory/v1/inventory_item", {"limit": 10}),
             ProbeRequest("orders_read", "/sell/fulfillment/v1/order", {"limit": 10}),
             ProbeRequest("finances_read", "/sell/finances/v1/transaction", {"limit": 10}),
@@ -100,9 +100,7 @@ class EbayApiProbe:
             responses[request.name] = self.client.get(request.name, request.path, request.params)
         field_matrix = self._field_matrix(responses)
         permission_matrix = self._permission_matrix(responses)
-        unrelated = permission_matrix["unrelated_best_offers_denied"]
-        if unrelated["accessible"]:
-            raise ProbeError("unrelated listing Best Offer probe unexpectedly succeeded")
+        unrelated = permission_matrix["unrelated_best_offers_probe"]
         message_content_detected = any(row["message_content_detected"] for row in field_matrix.values())
         return {
             "mode": "sandbox" if self.sandbox else "production",
@@ -115,6 +113,8 @@ class EbayApiProbe:
             "message_content_violation": message_content_detected,
             "field_matrix": field_matrix,
             "permission_matrix": permission_matrix,
+            "unrelated_visibility_observation": "accessible" if unrelated["accessible"] else "denied",
+            "unrelated_visibility_conclusion": "empirical probe result only; no access assumption is hard-coded",
             "redacted": True,
             "raw_payloads_retained": False,
         }
@@ -183,8 +183,9 @@ class EbayApiProbe:
             matrix[name] = {
                 "status": status,
                 "accessible": 200 <= status < 300,
-                "expected_denial": name == "unrelated_best_offers_denied",
-                "denied_as_expected": name != "unrelated_best_offers_denied" or not (200 <= status < 300),
+                "expected_denial": None if name == "unrelated_best_offers_probe" else False,
+                "denied_as_expected": None if name == "unrelated_best_offers_probe" else True,
+                "observed_result": "accessible" if 200 <= status < 300 else "denied",
             }
         return matrix
 

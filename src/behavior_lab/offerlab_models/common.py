@@ -63,6 +63,7 @@ class ModelLineage:
     forbidden_features: list[str]
     training_row_count: int
     training_rows_hash: str
+    training_feature_values_hash: str
     evidence_role: str = EVIDENCE_ROLE
     production_export_allowed: bool = PRODUCTION_EXPORT_ALLOWED
 
@@ -72,22 +73,45 @@ class ModelLineage:
 
 def model_lineage(model_id: str, rows: Iterable[dict[str, Any]], *, feature_contract: list[str] | None = None) -> dict[str, Any]:
     items = list(rows)
+    declared_contract = list(feature_contract or FEATURE_CONTRACT)
+    raw_features = _raw_features_for_contract(declared_contract)
+    feature_payload = [
+        {
+            name: enriched_features(row).get(name)
+            for name in raw_features
+        }
+        for row in items
+    ]
     payload = [
         {
             "row_id": row.get("row_id"),
             "label": row.get("label"),
             "timestamp": row.get("timestamp"),
+            "features": feature_values,
         }
-        for row in items
+        for row, feature_values in zip(items, feature_payload, strict=True)
     ]
     return ModelLineage(
         model_id=model_id,
         source_dataset_ids=[SOURCE_ID],
-        feature_contract=list(feature_contract or FEATURE_CONTRACT),
+        feature_contract=declared_contract,
         forbidden_features=sorted(FORBIDDEN_MODEL_FIELDS),
         training_row_count=len(items),
         training_rows_hash=stable_hash(payload),
+        training_feature_values_hash=stable_hash(feature_payload),
     ).to_dict()
+
+
+def _raw_features_for_contract(feature_contract: list[str]) -> list[str]:
+    selected: list[str] = []
+    for raw_name in FEATURE_CONTRACT:
+        if raw_name in feature_contract or any(
+            name.startswith(f"{raw_name}=") for name in feature_contract
+        ):
+            selected.append(raw_name)
+    # Unknown derived names still require binding to all permitted raw inputs;
+    # otherwise a caller could claim an opaque transform while hashing no data.
+    return selected or list(FEATURE_CONTRACT)
 
 
 def validate_feature_contract(rows: Iterable[dict[str, Any]]) -> bool:

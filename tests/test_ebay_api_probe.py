@@ -14,7 +14,7 @@ class EbayApiProbeTests(unittest.TestCase):
             {
                 "seller_owned_best_offers": {"status": 200, "bestOffers": [{"price": {"value": "72.00"}, "buyer": {"userId": "x"}}]},
                 "buyer_participated_best_offers": {"status": 200, "bestOffers": [{"offerPrice": {"value": "70.00"}}]},
-                "unrelated_best_offers_denied": {"status": 403, "error": "denied"},
+                "unrelated_best_offers_probe": {"status": 403, "error": "denied"},
                 "inventory_read": {"status": 200, "inventoryItemGroupKey": "g1"},
                 "orders_read": {"status": 200, "orderId": "o1", "lineItems": []},
                 "finances_read": {"status": 200, "feeType": "FINAL_VALUE_FEE", "amount": {"value": "1.00"}},
@@ -33,7 +33,8 @@ class EbayApiProbeTests(unittest.TestCase):
         self.assertFalse(report["message_content_detected"])
         self.assertFalse(report["field_matrix"]["seller_owned_best_offers"]["message_content"])
         self.assertTrue(report["field_matrix"]["seller_owned_best_offers"]["offer_amount"])
-        self.assertTrue(report["permission_matrix"]["unrelated_best_offers_denied"]["denied_as_expected"])
+        self.assertEqual(report["permission_matrix"]["unrelated_best_offers_probe"]["observed_result"], "denied")
+        self.assertEqual(report["unrelated_visibility_observation"], "denied")
         self.assertEqual(len(client.calls), 7)
 
     def test_probe_rejects_broad_scopes_and_mutation_paths(self) -> None:
@@ -56,18 +57,18 @@ class EbayApiProbeTests(unittest.TestCase):
         responses = {
             "seller_owned_best_offers": {"status": 200, "bestOffers": [{"message": "do not collect"}]},
             "buyer_participated_best_offers": {"status": 200},
-            "unrelated_best_offers_denied": {"status": 200},
+            "unrelated_best_offers_probe": {"status": 200},
         }
         for key in ["inventory_read", "orders_read", "finances_read", "traffic_read"]:
             responses[key] = {"status": 200}
-        with self.assertRaises(ProbeError):
-            EbayApiProbe(StaticProbeClient(responses)).run(
-                scopes=["https://api.ebay.com/oauth/api_scope"],
-                seller_owned_listing_id="a",
-                buyer_participated_listing_id="b",
-                unrelated_listing_id="c",
-            )
-        responses["unrelated_best_offers_denied"] = {"status": 403}
+        accessible_report = EbayApiProbe(StaticProbeClient(responses)).run(
+            scopes=["https://api.ebay.com/oauth/api_scope"],
+            seller_owned_listing_id="a",
+            buyer_participated_listing_id="b",
+            unrelated_listing_id="c",
+        )
+        self.assertEqual(accessible_report["unrelated_visibility_observation"], "accessible")
+        responses["unrelated_best_offers_probe"] = {"status": 403}
         report = EbayApiProbe(StaticProbeClient(responses)).run(
             scopes=["https://api.ebay.com/oauth/api_scope"],
             seller_owned_listing_id="a",

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from behavior_lab.benchmarks.metrics import classification_accuracy, multiclass_log_loss, regression_rmse
-from behavior_lab.benchmarks.splits import assert_disjoint_groups, chronological_split, group_disjoint_split
+from behavior_lab.benchmarks.splits import assert_disjoint_groups, chronological_group_purged_split, group_disjoint_split
 from behavior_lab.datasets.nber_best_offer.baselines import CategoryMajorityClassifier, MajorityClassifier, MedianRegressor, OfferRatioThresholdClassifier
 from behavior_lab.datasets.nber_best_offer.tasks import assert_no_future_leakage, build_tasks
 
@@ -30,7 +30,7 @@ def benchmark(normalized_dir: str | Path) -> dict[str, Any]:
             leaderboards[task_name] = {"chronological": [], "seller_disjoint": []}
             continue
         leaderboards[task_name] = {
-            "chronological": _evaluate_split(task_name, chronological_split(rows, time_key="timestamp"), split_type="chronological"),
+            "chronological": _evaluate_split(task_name, chronological_group_purged_split(rows, time_key="timestamp", group_key="thread_id"), split_type="chronological"),
             "seller_disjoint": _evaluate_split(task_name, group_disjoint_split(rows, group_key="seller_id"), split_type="seller_disjoint"),
         }
     return {"leaderboards": leaderboards}
@@ -44,9 +44,14 @@ def audit(normalized_dir: str | Path, *, output_path: str | Path | None = None) 
     for task_name, rows in tasks.items():
         group_split = group_disjoint_split(rows, group_key="seller_id") if rows else None
         split_checks[f"{task_name}_seller_disjoint"] = assert_disjoint_groups(group_split, group_key="seller_id") if group_split else True
-        chrono_split = chronological_split(rows, time_key="timestamp") if rows else None
+        chrono_split = chronological_group_purged_split(rows, time_key="timestamp", group_key="thread_id") if rows else None
+        split_checks[f"{task_name}_thread_disjoint"] = assert_disjoint_groups(chrono_split, group_key="thread_id") if chrono_split else True
         split_details[task_name] = {
             "chronological": chrono_split.sizes() if chrono_split else {"train": 0, "development": 0, "hidden": 0},
+            "chronological_purge": {
+                "purged_group_ids": list(chrono_split.purged_group_ids),
+                "purged_rows": chrono_split.purged_rows,
+            } if chrono_split else {"purged_group_ids": [], "purged_rows": 0},
             "seller_disjoint": group_split.sizes() if group_split else {"train": 0, "development": 0, "hidden": 0},
         }
     report = NberAuditReport(
@@ -62,9 +67,6 @@ def audit(normalized_dir: str | Path, *, output_path: str | Path | None = None) 
 
 
 def _evaluate_split(task_name: str, split: Any, *, split_type: str) -> list[dict[str, Any]]:
-    for split_name, split_rows in [("train", split.train), ("development", split.development), ("hidden", split.hidden)]:
-        for row in split_rows:
-            row["split"] = split_name
     evaluation_rows = split.hidden or split.development
     if task_name in {"final_price_ratio", "response_latency"}:
         model = MedianRegressor().fit(split.train)

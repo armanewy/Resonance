@@ -22,7 +22,7 @@ Spend one prospective query
 
 This repository is an infrastructure MVP, not a validated human-behavior oracle.
 
-`v0.3.0` is frozen as the laboratory version for the first real-use campaign. Campaign 001 is now a scientific demonstration and fixture. The commercial direction is Campaign 002, an eBay seller offer and margin optimizer working under the name OfferLab.
+`v0.3.0` remains frozen as the laboratory version for the first real-use campaign. The current reviewed harness is `v0.4.0`. Campaign 001 is a scientific demonstration and fixture; Campaign 002 is the OfferLab commercial research direction.
 
 ## What is implemented
 
@@ -34,7 +34,11 @@ This repository is an infrastructure MVP, not a validated human-behavior oracle.
 - A heterogeneous model foundry: base rate, recent rate, nearest neighbor, threshold, decision stump, two-state model, linear formula, and symbolic search.
 - Campaign-scoped, hashed, reloadable model artifacts.
 - Development diagnostics, residuals, counterexamples, paired comparison, and complexity frontiers.
-- Persistent hidden/prospective evaluation budgets.
+- Persistent hidden/prospective evaluation budgets, reserved before evaluation so crashes cannot create free retries.
+- Exact artifact, training-snapshot, and hidden-case-set binding for OfferLab research lockboxes.
+- Conservative negotiation-thread temporal splits that purge threads crossing split boundaries.
+- Explicit censoring: incomplete negotiation threads are not converted into failed-agreement labels.
+- Immutable authorization-evidence gates for production artifacts derived from current seller data.
 - Cross-campaign protection against reusing previously queried hidden cases.
 - Preregistered randomized experiments with assignment and outcome integrity checks.
 - Deterministic, restart-safe randomization streams that remain independent across repeated registrations of the same design.

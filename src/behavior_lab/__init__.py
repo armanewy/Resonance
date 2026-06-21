@@ -1,6 +1,6 @@
 """Closed-loop behavioral hypothesis discovery infrastructure."""
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 from behavior_lab.core import (
     DecisionEpisode,

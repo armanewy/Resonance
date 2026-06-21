@@ -3,7 +3,7 @@
 Wave 4 treats external benchmark sources as ancillary validation, not as pooled
 training rows for eBay offer prediction.
 
-Current default ablation result: **do not retain transfer features**.
+Current default ablation status: **not run**. No numeric hidden-loss or calibration values are fabricated when measured results have not been supplied.
 
 Reason:
 
@@ -11,8 +11,7 @@ Reason:
 - Open Bandit and Criteo validate evaluator and causal machinery, but their rows
   are not eBay bargaining rows.
 - CraigslistBargain is useful for dialogue-act extraction only.
-- Transfer is retained only when it improves NBER hidden loss and calibration
-  simultaneously.
+- Transfer is retained only after explicit measured NBER hidden-loss and calibration results both improve beyond preregistered thresholds.
 
 Policy:
 
