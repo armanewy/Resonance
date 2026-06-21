@@ -7,6 +7,9 @@
       "url": "https://www.nber.org/bargaining/anon_bo_lists.csv.gz",
       "etag_observed_2026_06_21": "10956f7aa-56cf7323af5c0",
       "compressed_size_from_etag_prefix": 4451661738,
+      "local_path_observed_2026_06_21": "C:/OfferLabData/raw/nber_best_offer/anon_bo_lists.csv.gz",
+      "compressed_size_observed_2026_06_21": 4451661738,
+      "sha256_observed_2026_06_21": "CEDA12755878304DAA4CA43B45C72EC98A7382A1EE646E66C33F6841E5D1A646",
       "expected_header": [
         "anon_item_id",
         "anon_title_code",
@@ -52,6 +55,9 @@
       "url": "https://www.nber.org/bargaining/anon_bo_threads.csv.gz",
       "etag_observed_2026_06_21": "51e6bd20-56cf74cb1dcc0",
       "compressed_size_from_etag_prefix": 1374076192,
+      "local_path_observed_2026_06_21": "C:/OfferLabData/raw/nber_best_offer/anon_bo_threads.csv.gz",
+      "compressed_size_observed_2026_06_21": 1374076192,
+      "sha256_observed_2026_06_21": "F6FAEB797A8ED2F0C84D0E3C6E9B82F0AD2BD971DF354D57C902B478E757DEE9",
       "expected_header": [
         "anon_item_id",
         "anon_thread_id",
@@ -78,7 +84,7 @@
   },
   "notes": [
     "This manifest records official download targets and expected source headers. It does not contain raw source records.",
-    "Full source hashes are filled by nber-best-offer source-inventory after local download.",
+    "Observed source hashes were recorded after local download on 2026-06-21.",
     "NBER-derived artifacts are research-only and non-exportable."
   ]
 }
