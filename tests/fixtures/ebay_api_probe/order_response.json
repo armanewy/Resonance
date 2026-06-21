@@ -1,0 +1,10 @@
+{
+  "orderId": "synthetic-order-1",
+  "buyerUserId": "synthetic-buyer-id",
+  "email": "buyer@example.invalid",
+  "shippingAddress": {
+    "name": "Synthetic Buyer",
+    "street": "1 Example Street"
+  },
+  "message": "synthetic private message"
+}

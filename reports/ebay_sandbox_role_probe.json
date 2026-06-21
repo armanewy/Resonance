@@ -1,0 +1,17 @@
+{
+  "schema_version": "ebay_sandbox_role_probe.v1",
+  "status": "blocked",
+  "blocked_reason": "missing_sandbox_credentials_and_manual_listing_setup",
+  "executed": false,
+  "raw_payloads_retained": false,
+  "tokens_available": false,
+  "manual_setup_required": [
+    "sandbox seller user",
+    "sandbox bidder user",
+    "sandbox unrelated observer user",
+    "Best-Offer-enabled fixed-price listing",
+    "at least two offers and one counteroffer",
+    "active and ended listing observations"
+  ],
+  "visibility_result": "indeterminate"
+}

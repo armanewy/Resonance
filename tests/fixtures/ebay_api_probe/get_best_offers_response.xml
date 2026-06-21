@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<GetBestOffersResponse>
+  <Ack>Success</Ack>
+  <BestOfferArray>
+    <BestOffer>
+      <Price currencyID="USD">72.00</Price>
+      <Buyer>
+        <UserID>synthetic-buyer-id</UserID>
+        <Email>buyer@example.invalid</Email>
+      </Buyer>
+      <Message>synthetic private message</Message>
+    </BestOffer>
+  </BestOfferArray>
+</GetBestOffersResponse>

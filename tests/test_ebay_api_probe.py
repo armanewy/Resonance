@@ -57,7 +57,7 @@ class EbayApiProbeTests(unittest.TestCase):
         responses = {
             "seller_owned_best_offers": {"status": 200, "bestOffers": [{"message": "do not collect"}]},
             "buyer_participated_best_offers": {"status": 200},
-            "unrelated_best_offers_probe": {"status": 200},
+            "unrelated_best_offers_probe": {"status": 200, "bestOffers": [{"offerPrice": {"value": "42.00"}}]},
         }
         for key in ["inventory_read", "orders_read", "finances_read", "traffic_read"]:
             responses[key] = {"status": 200}
@@ -68,6 +68,14 @@ class EbayApiProbeTests(unittest.TestCase):
             unrelated_listing_id="c",
         )
         self.assertEqual(accessible_report["unrelated_visibility_observation"], "accessible")
+        responses["unrelated_best_offers_probe"] = {"status": 200}
+        empty_report = EbayApiProbe(StaticProbeClient(responses)).run(
+            scopes=["https://api.ebay.com/oauth/api_scope"],
+            seller_owned_listing_id="a",
+            buyer_participated_listing_id="b",
+            unrelated_listing_id="c",
+        )
+        self.assertEqual(empty_report["unrelated_visibility_observation"], "empty")
         responses["unrelated_best_offers_probe"] = {"status": 403}
         report = EbayApiProbe(StaticProbeClient(responses)).run(
             scopes=["https://api.ebay.com/oauth/api_scope"],

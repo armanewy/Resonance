@@ -113,7 +113,7 @@ class EbayApiProbe:
             "message_content_violation": message_content_detected,
             "field_matrix": field_matrix,
             "permission_matrix": permission_matrix,
-            "unrelated_visibility_observation": "accessible" if unrelated["accessible"] else "denied",
+            "unrelated_visibility_observation": unrelated["observed_result"],
             "unrelated_visibility_conclusion": "empirical probe result only; no access assumption is hard-coded",
             "redacted": True,
             "raw_payloads_retained": False,
@@ -180,12 +180,13 @@ class EbayApiProbe:
         matrix = {}
         for name, response in responses.items():
             status = int(response.get("status", 200))
+            observed_result = _observed_permission_result(status, response)
             matrix[name] = {
                 "status": status,
-                "accessible": 200 <= status < 300,
+                "accessible": observed_result == "accessible",
                 "expected_denial": None if name == "unrelated_best_offers_probe" else False,
                 "denied_as_expected": None if name == "unrelated_best_offers_probe" else True,
-                "observed_result": "accessible" if 200 <= status < 300 else "denied",
+                "observed_result": observed_result,
             }
         return matrix
 
@@ -200,3 +201,20 @@ def _flatten_keys(value: Any) -> set[str]:
         for item in value:
             keys.update(_flatten_keys(item))
     return keys
+
+
+def _observed_permission_result(status: int, response: dict[str, Any]) -> str:
+    if status == 0 or response.get("transport_error") or response.get("parse_error"):
+        return "indeterminate"
+    if status in {401, 403}:
+        return "denied"
+    if not (200 <= status < 300):
+        return "indeterminate"
+    keys = _flatten_keys(response)
+    offer_markers = {"bestoffers", "bestoffer", "offerprice", "price", "amount", "currency"}
+    non_status_keys = keys - {"status", "ack", "request_name", "transport", "error_codes", "warning_codes", "field_keys", "raw_payload_retained"}
+    if keys & offer_markers:
+        return "accessible"
+    if not non_status_keys:
+        return "empty"
+    return "accessible"
