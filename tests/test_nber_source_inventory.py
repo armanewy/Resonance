@@ -10,7 +10,8 @@ import tempfile
 import unittest
 import zipfile
 
-from behavior_lab.datasets.nber_best_offer.source_inventory import public_summary, run_source_inventory
+from behavior_lab.datasets.nber_best_offer.source_inventory import SourceInventoryError, public_summary, run_source_inventory
+from behavior_lab.datasets.nber_best_offer.source_schema import read_codebook_sheets
 
 
 class NberSourceInventoryTests(unittest.TestCase):
@@ -74,6 +75,7 @@ class NberSourceInventoryTests(unittest.TestCase):
                 reservoir_rows=2,
                 chronological_rows_per_slice=1,
                 timeout_seconds=10,
+                download=True,
             )
 
             list_file = next(item for item in manifest["files"] if item["logical_name"] == "anon_bo_lists")
@@ -96,6 +98,33 @@ class NberSourceInventoryTests(unittest.TestCase):
             self.assertNotIn("seller-secret-1", summary)
             self.assertNotIn("buyer-secret-1", summary)
             self.assertFalse(json.loads(summary)["raw_rows_printed"])
+            sheets = read_codebook_sheets(official / "Codebook.xlsx")
+            self.assertEqual(sheets["Codebook"][0][:2], ["variable", "description"])
+
+    def test_report_inventory_requires_explicit_download_when_files_are_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            official = root / "official"
+            raw = root / "raw"
+            official.mkdir()
+            self._write_gzip_csv(official / "anon_bo_lists.csv.gz", [["a"], ["b"]])
+            sources = [
+                {
+                    "logical_name": "anon_bo_lists",
+                    "filename": "anon_bo_lists.csv.gz",
+                    "url": (official / "anon_bo_lists.csv.gz").as_uri(),
+                    "kind": "csv_gzip",
+                }
+            ]
+            with self.assertRaises(SourceInventoryError):
+                run_source_inventory(
+                    raw_dir=raw,
+                    manifest_path=root / "repo" / "manifest.yaml",
+                    doc_path=root / "repo" / "inventory.md",
+                    official_sources=sources,
+                    write_outputs=False,
+                )
+            self.assertFalse((raw / "anon_bo_lists.csv.gz").exists())
 
     def _write_gzip_csv(self, path: Path, rows: list[list[str]]) -> None:
         with gzip.open(path, "wt", encoding="utf-8", newline="") as handle:

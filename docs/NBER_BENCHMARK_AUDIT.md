@@ -43,7 +43,10 @@ run accepts the verified real headers, writes partitioned Parquet when PyArrow
 is installed, records raw hashes and mapping lineage, keeps thread rows grouped
 before partition output, extracts only thread-linked listings for the first
 benchmark, and supports resume after the thread pass. The full official release
-has not been normalized yet.
+has not been normalized yet. The `--full` mode is intentionally blocked until
+the real-source path replaces its bounded-sample in-memory state with
+disk-backed listing and thread indexes, full-run checkpoints, and disk preflight
+evidence.
 
 ## Interpretation
 

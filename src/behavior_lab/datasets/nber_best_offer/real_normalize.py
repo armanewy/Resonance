@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 import csv
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime
 import gzip
 import hashlib
@@ -10,10 +10,11 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import time
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterator
 
 from behavior_lab.datasets.nber_best_offer.source_schema import (
     OFFER_TYPE_MAP,
@@ -25,6 +26,26 @@ from behavior_lab.datasets.nber_best_offer.source_schema import (
     sha256_file,
     validate_real_headers,
 )
+
+NBER_SOURCE_ID = "nber_ebay_best_offer"
+PREDICTOR_ALLOWED_LISTING_FIELDS = [
+    "category",
+    "condition",
+    "listing_price",
+    "photo_count",
+    "seller_us",
+]
+PROTECTED_LISTING_FIELDS = [
+    "buyer_id_if_sold",
+    "end_time",
+    "final_sale_price",
+    "sold_by_best_offer",
+    "auto_decline_price",
+    "auto_accept_price",
+    "buyer_us_if_sold",
+    "excluded_reference_price_ref_price4",
+    "excluded_reference_count4",
+]
 
 
 class NberRealNormalizeError(ValueError):
@@ -49,6 +70,20 @@ class Quarantine:
                 }
             )
 
+    def to_payload(self) -> dict[str, Any]:
+        return {"counts": dict(self.counts), "examples": list(self.examples)}
+
+    def merge_payload(self, payload: dict[str, Any] | None) -> None:
+        if not payload:
+            return
+        for reason, count in dict(payload.get("counts", {})).items():
+            self.counts[str(reason)] = self.counts.get(str(reason), 0) + int(count)
+        for example in list(payload.get("examples", [])):
+            if len(self.examples) >= 25:
+                break
+            if isinstance(example, dict):
+                self.examples.append(example)
+
 
 def normalize_real_dataset(
     raw_dir: str | Path,
@@ -63,6 +98,12 @@ def normalize_real_dataset(
 ) -> dict[str, Any]:
     if not full and limit_threads is None:
         raise NberRealNormalizeError("Use --limit-threads or --full for real NBER normalization")
+    if full:
+        raise NberRealNormalizeError(
+            "Full NBER normalization is intentionally blocked: the current real-source "
+            "normalizer is validated only for bounded --limit-threads runs. Implement "
+            "disk-backed listing/thread indexes and full-run checkpointing before using --full."
+        )
     start = time.perf_counter()
     raw = Path(raw_dir)
     output = Path(output_dir)
@@ -82,6 +123,7 @@ def normalize_real_dataset(
         "partition_rows": partition_rows,
         "seed": seed,
         "transformation_version": REAL_TRANSFORMATION_VERSION,
+        "normalizer_schema_revision": "wave1_audit_gate.v2",
     }
     if manifest_path.exists():
         current = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -98,24 +140,46 @@ def normalize_real_dataset(
         raise NberRealNormalizeError(json.dumps(header_report, sort_keys=True))
 
     bucket_dir = temp_dir / "thread_buckets"
-    ids_path = temp_dir / "thread_listing_ids.jsonl"
+    id_index_path = temp_dir / "thread_listing_ids.sqlite"
     thread_checkpoint = checkpoints / "thread_pass.complete.json"
     thread_counts: dict[str, Any]
-    if thread_checkpoint.exists():
-        thread_counts = json.loads(thread_checkpoint.read_text(encoding="utf-8"))
+    checkpoint_signature = _thread_checkpoint_signature(
+        args_signature=args_signature,
+        source_hashes=source_hashes,
+        header_report=header_report,
+    )
+    checkpoint = _load_valid_thread_checkpoint(
+        thread_checkpoint,
+        checkpoint_signature,
+        bucket_dir=bucket_dir,
+        id_index_path=id_index_path,
+    )
+    if checkpoint is not None:
+        thread_counts = dict(checkpoint["thread_counts"])
+        quarantine.merge_payload(checkpoint.get("quarantine"))
     else:
         if bucket_dir.exists():
             shutil.rmtree(bucket_dir)
+        if id_index_path.exists():
+            id_index_path.unlink()
         bucket_dir.mkdir(parents=True)
         thread_counts = _bucket_thread_rows(
             threads_path,
             bucket_dir,
-            ids_path,
+            id_index_path,
             bucket_count=bucket_count,
             limit_threads=limit_threads,
             quarantine=quarantine,
         )
-        _write_atomic_json(thread_checkpoint, thread_counts)
+        _write_atomic_json(
+            thread_checkpoint,
+            {
+                "schema_version": "nber_real_thread_pass_checkpoint.v2",
+                "signature": checkpoint_signature,
+                "thread_counts": thread_counts,
+                "quarantine": quarantine.to_payload(),
+            },
+        )
     if stop_after_thread_pass:
         return {"status": "stopped_after_thread_pass", "thread_pass": thread_counts, "output_dir": str(output.resolve())}
 
@@ -127,16 +191,24 @@ def normalize_real_dataset(
         table_dir.mkdir(parents=True)
 
     turn_rows = _write_turn_partitions(bucket_dir, turn_table, partition_rows=partition_rows, quarantine=quarantine)
-    listing_ids = _load_listing_ids(ids_path)
-    listing_rows = _write_listing_partitions(lists_path, listing_ids, listing_table, partition_rows=partition_rows, quarantine=quarantine)
-    unmatched = sorted(listing_ids - set(listing_rows["matched_listing_ids"]))
+    listing_rows = _write_listing_partitions(lists_path, id_index_path, listing_table, partition_rows=partition_rows, quarantine=quarantine)
     quarantine_path = output / "quarantine.json"
-    quarantine_payload = {"counts": quarantine.counts, "examples": quarantine.examples}
+    quarantine_payload = quarantine.to_payload()
     _write_atomic_json(quarantine_path, quarantine_payload)
+    manifest_sha_path = manifest_path.with_suffix(manifest_path.suffix + ".sha256")
     manifest = {
         "status": "complete",
         "schema_version": "nber_real_normalized_manifest.v1",
         "transformation_version": REAL_TRANSFORMATION_VERSION,
+        "source_dataset_ids": [NBER_SOURCE_ID],
+        "research_only": True,
+        "production_export_allowed": False,
+        "commercial_training_allowed": False,
+        "predictor_feature_policy": {
+            "allowed_listing_fields": PREDICTOR_ALLOWED_LISTING_FIELDS,
+            "protected_listing_fields": PROTECTED_LISTING_FIELDS,
+            "reference_price_policy": "ref_price4 is preserved as excluded audit metadata and is not exported as predictor-facing reference_price.",
+        },
         "git_commit": _git_commit(),
         "command_args": args_signature,
         "random_seed": seed,
@@ -152,23 +224,28 @@ def normalize_real_dataset(
         },
         "source_thread_pass": thread_counts,
         "thread_linked_listing_extraction": {
-            "distinct_listing_ids": len(listing_ids),
+            "distinct_listing_ids": listing_rows["distinct_listing_ids"],
             "matched_listings": listing_rows["rows"],
-            "unmatched_listing_ids": len(unmatched),
-            "unmatched_examples_hash": [_hash_value(value) for value in unmatched[:25]],
+            "unmatched_listing_ids": listing_rows["unmatched_listing_ids"],
+            "unmatched_examples_hash": listing_rows["unmatched_examples_hash"],
             "non_negotiated_listings_omitted": True,
+            "membership_index": "sqlite",
         },
         "quarantine": {"path": str(quarantine_path.resolve()), **quarantine_payload},
         "lineage": {
             "raw_source_hashes": source_hashes,
             "split_manifest_hash": None,
             "normalization_manifest_hash": None,
+            "normalization_manifest_payload_hash": None,
+            "normalization_manifest_sha256_file": str(manifest_sha_path.resolve()),
         },
         "runtime_seconds": round(time.perf_counter() - start, 3),
     }
+    manifest_hash = _canonical_manifest_hash(manifest)
+    manifest["lineage"]["normalization_manifest_hash"] = manifest_hash
+    manifest["lineage"]["normalization_manifest_payload_hash"] = manifest_hash
     _write_atomic_json(manifest_path, manifest)
-    manifest["lineage"]["normalization_manifest_hash"] = sha256_file(manifest_path)
-    _write_atomic_json(manifest_path, manifest)
+    manifest_sha_path.write_text(f"{sha256_file(manifest_path)}  {manifest_path.name}\n", encoding="utf-8")
     return manifest
 
 
@@ -182,21 +259,21 @@ def inspect_real_source_schema(raw_dir: str | Path) -> dict[str, Any]:
 def _bucket_thread_rows(
     threads_path: Path,
     bucket_dir: Path,
-    ids_path: Path,
+    id_index_path: Path,
     *,
     bucket_count: int,
     limit_threads: int | None,
     quarantine: Quarantine,
 ) -> dict[str, Any]:
-    seen_threads: set[str] = set()
     accepted_rows = 0
     duplicate_rows = 0
-    row_hashes: set[str] = set()
     status_counts: Counter[str] = Counter()
     offer_type_counts: Counter[str] = Counter()
+    index = _open_id_index(id_index_path, reset=True)
+    distinct_threads = 0
     bucket_handles = [(bucket_dir / f"bucket_{index:04d}.jsonl").open("w", encoding="utf-8", newline="\n") for index in range(bucket_count)]
     try:
-        with _open_text(threads_path) as handle, ids_path.open("w", encoding="utf-8", newline="\n") as ids:
+        with _open_text(threads_path) as handle:
             reader = csv.DictReader(handle)
             for line_number, row in enumerate(reader, start=2):
                 thread_id = row.get("anon_thread_id", "")
@@ -204,14 +281,16 @@ def _bucket_thread_rows(
                 if not thread_id or not listing_id or not row.get("anon_byr_id") or not row.get("anon_slr_id"):
                     quarantine.add("missing_required_thread_identifier", row, source_file=threads_path.name, line_number=line_number)
                     continue
-                if limit_threads is not None and thread_id not in seen_threads and len(seen_threads) >= limit_threads:
+                known_thread = _id_index_contains(index, "seen_threads", "thread_id", thread_id)
+                if limit_threads is not None and not known_thread and distinct_threads >= limit_threads:
                     continue
                 row_digest = _row_hash(row)
-                if row_digest in row_hashes:
+                if not _id_index_insert(index, "row_hashes", "row_hash", row_digest):
                     duplicate_rows += 1
                     continue
-                row_hashes.add(row_digest)
-                seen_threads.add(thread_id)
+                if not known_thread:
+                    _id_index_insert(index, "seen_threads", "thread_id", thread_id)
+                    distinct_threads += 1
                 status_counts[row.get("status_id", "")] += 1
                 offer_type_counts[row.get("offr_type_id", "")] += 1
                 if row.get("status_id", "") not in STATUS_MAP:
@@ -222,15 +301,19 @@ def _bucket_thread_rows(
                     continue
                 bucket = int(hashlib.sha256(thread_id.encode("utf-8")).hexdigest(), 16) % bucket_count
                 bucket_handles[bucket].write(json.dumps(row, sort_keys=True) + "\n")
-                ids.write(json.dumps({"listing_id": listing_id}, sort_keys=True) + "\n")
+                _id_index_insert(index, "listing_ids", "listing_id", listing_id)
                 accepted_rows += 1
+                if accepted_rows % 10_000 == 0:
+                    index.commit()
     finally:
         for handle in bucket_handles:
             handle.close()
+        index.commit()
+        index.close()
     return {
         "source": str(threads_path.resolve()),
         "accepted_rows": accepted_rows,
-        "distinct_threads": len(seen_threads),
+        "distinct_threads": distinct_threads,
         "duplicate_full_rows_removed": duplicate_rows,
         "status_counts": dict(status_counts),
         "offer_type_counts": dict(offer_type_counts),
@@ -244,24 +327,56 @@ def _write_turn_partitions(bucket_dir: Path, table_dir: Path, *, partition_rows:
     total = 0
     part_index = 0
     for bucket in sorted(bucket_dir.glob("bucket_*.jsonl")):
-        grouped: dict[str, list[dict[str, str]]] = defaultdict(list)
-        for line in bucket.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                row = json.loads(line)
-                grouped[str(row["anon_thread_id"])].append(row)
-        for thread_id, rows in grouped.items():
-            rows.sort(key=lambda item: (_parse_datetime(item.get("src_cre_date", "")) or datetime.max, item.get("offr_type_id", ""), item.get("offr_price", "")))
-            for index, row in enumerate(rows, start=1):
-                try:
-                    rows_out.append(_normalize_thread_row(row, turn_index=index))
-                except Exception:
-                    quarantine.add("thread_normalization_error", row, source_file=bucket.name, line_number=index)
-                    continue
-                if len(rows_out) >= partition_rows:
-                    partitions.append(_write_partition(table_dir, "turns", part_index, rows_out))
-                    total += len(rows_out)
-                    rows_out = []
-                    part_index += 1
+        staging_path = bucket.with_suffix(".sqlite")
+        if staging_path.exists():
+            staging_path.unlink()
+        conn = sqlite3.connect(staging_path)
+        try:
+            conn.execute(
+                "CREATE TABLE rows (thread_id TEXT NOT NULL, sort_time TEXT NOT NULL, offer_type TEXT NOT NULL, amount TEXT NOT NULL, payload TEXT NOT NULL)"
+            )
+            batch = []
+            with bucket.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    row = json.loads(line)
+                    batch.append(
+                        (
+                            str(row["anon_thread_id"]),
+                            _parse_datetime_string(row.get("src_cre_date")) or str(row.get("src_cre_date", "")),
+                            str(row.get("offr_type_id", "")),
+                            str(row.get("offr_price", "")),
+                            json.dumps(row, sort_keys=True),
+                        )
+                    )
+                    if len(batch) >= 10_000:
+                        conn.executemany("INSERT INTO rows VALUES (?, ?, ?, ?, ?)", batch)
+                        batch = []
+                if batch:
+                    conn.executemany("INSERT INTO rows VALUES (?, ?, ?, ?, ?)", batch)
+            conn.commit()
+            for (thread_id,) in conn.execute("SELECT DISTINCT thread_id FROM rows ORDER BY thread_id"):
+                cursor = conn.execute(
+                    "SELECT payload FROM rows WHERE thread_id = ? ORDER BY sort_time, offer_type, amount",
+                    (thread_id,),
+                )
+                for index, (payload,) in enumerate(cursor, start=1):
+                    row = json.loads(payload)
+                    try:
+                        rows_out.append(_normalize_thread_row(row, turn_index=index))
+                    except Exception:
+                        quarantine.add("thread_normalization_error", row, source_file=bucket.name, line_number=index)
+                        continue
+                    if len(rows_out) >= partition_rows:
+                        partitions.append(_write_partition(table_dir, "turns", part_index, rows_out))
+                        total += len(rows_out)
+                        rows_out = []
+                        part_index += 1
+        finally:
+            conn.close()
+            if staging_path.exists():
+                staging_path.unlink()
     if rows_out:
         partitions.append(_write_partition(table_dir, "turns", part_index, rows_out))
         total += len(rows_out)
@@ -270,7 +385,7 @@ def _write_turn_partitions(bucket_dir: Path, table_dir: Path, *, partition_rows:
 
 def _write_listing_partitions(
     lists_path: Path,
-    listing_ids: set[str],
+    id_index_path: Path,
     table_dir: Path,
     *,
     partition_rows: int,
@@ -280,28 +395,33 @@ def _write_listing_partitions(
     partitions = []
     total = 0
     part_index = 0
-    matched: set[str] = set()
-    with _open_text(lists_path) as handle:
-        reader = csv.DictReader(handle)
-        for line_number, row in enumerate(reader, start=2):
-            listing_id = row.get("anon_item_id", "")
-            if listing_id not in listing_ids:
-                continue
-            try:
-                rows_out.append(_normalize_listing_row(row))
-            except Exception:
-                quarantine.add("listing_normalization_error", row, source_file=lists_path.name, line_number=line_number)
-                continue
-            matched.add(listing_id)
-            if len(rows_out) >= partition_rows:
-                partitions.append(_write_partition(table_dir, "listings", part_index, rows_out))
-                total += len(rows_out)
-                rows_out = []
-                part_index += 1
-    if rows_out:
-        partitions.append(_write_partition(table_dir, "listings", part_index, rows_out))
-        total += len(rows_out)
-    return {"rows": total, "partitions": partitions, "matched_listing_ids": matched}
+    index = _open_id_index(id_index_path, reset=False)
+    try:
+        with _open_text(lists_path) as handle:
+            reader = csv.DictReader(handle)
+            for line_number, row in enumerate(reader, start=2):
+                listing_id = row.get("anon_item_id", "")
+                if not _id_index_contains(index, "listing_ids", "listing_id", listing_id):
+                    continue
+                try:
+                    rows_out.append(_normalize_listing_row(row))
+                except Exception:
+                    quarantine.add("listing_normalization_error", row, source_file=lists_path.name, line_number=line_number)
+                    continue
+                index.execute("UPDATE listing_ids SET matched = 1 WHERE listing_id = ?", (listing_id,))
+                if len(rows_out) >= partition_rows:
+                    partitions.append(_write_partition(table_dir, "listings", part_index, rows_out))
+                    total += len(rows_out)
+                    rows_out = []
+                    part_index += 1
+        if rows_out:
+            partitions.append(_write_partition(table_dir, "listings", part_index, rows_out))
+            total += len(rows_out)
+        index.commit()
+        id_stats = _listing_id_stats(index)
+    finally:
+        index.close()
+    return {"rows": total, "partitions": partitions, **id_stats}
 
 
 def _normalize_thread_row(row: dict[str, str], *, turn_index: int) -> dict[str, Any]:
@@ -344,8 +464,11 @@ def _normalize_listing_row(row: dict[str, str]) -> dict[str, Any]:
         "meta_category": row.get("meta_categ_id") or None,
         "condition": row.get("item_cndtn_id") or None,
         "listing_price": _float_or_none(row.get("start_price_usd")),
-        "reference_price": _float_or_none(row.get("ref_price4")),
-        "reference_count": _int_or_none(row.get("count4")),
+        "reference_price": None,
+        "reference_count": None,
+        "reference_price_unavailable_reason": "ref_price4 is excluded from predictor-facing features until its as-of semantics are proven.",
+        "excluded_reference_price_ref_price4": _float_or_none(row.get("ref_price4")),
+        "excluded_reference_count4": _int_or_none(row.get("count4")),
         "start_time": _parse_date_string(row.get("auct_start_dt")),
         "end_time": _parse_date_string(row.get("auct_end_dt")),
         "final_sale_price": _float_or_none(row.get("item_price")),
@@ -357,6 +480,7 @@ def _normalize_listing_row(row: dict[str, str]) -> dict[str, Any]:
         "auto_accept_price": _float_or_none(row.get("accept_price")),
         "seller_us": _bool_or_none(row.get("slr_us")),
         "buyer_us_if_sold": _bool_or_none(row.get("buyer_us")),
+        "protected_outcome_fields_present": True,
         "transformation_version": REAL_TRANSFORMATION_VERSION,
     }
 
@@ -401,12 +525,119 @@ def _find_source(root: Path, name: str) -> Path:
     raise NberRealNormalizeError(f"Missing {name} or {name}.gz in {root}")
 
 
-def _load_listing_ids(path: Path) -> set[str]:
-    ids = set()
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            ids.add(str(json.loads(line)["listing_id"]))
-    return ids
+def _thread_checkpoint_signature(
+    *,
+    args_signature: dict[str, Any],
+    source_hashes: dict[str, str],
+    header_report: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema_version": "nber_real_thread_pass_signature.v1",
+        "command_args": args_signature,
+        "source_hashes": source_hashes,
+        "header_validation": header_report,
+        "mapping_manifest_hash": mapping_hash(),
+    }
+
+
+def _load_valid_thread_checkpoint(
+    path: Path,
+    signature: dict[str, Any],
+    *,
+    bucket_dir: Path,
+    id_index_path: Path,
+) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    if payload.get("signature") != signature:
+        return None
+    if not bucket_dir.exists() or not any(bucket_dir.glob("bucket_*.jsonl")):
+        return None
+    if not _id_index_is_valid(id_index_path):
+        return None
+    if "thread_counts" not in payload:
+        return None
+    return payload
+
+
+def _open_id_index(path: Path, *, reset: bool) -> sqlite3.Connection:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if reset and path.exists():
+        path.unlink()
+    if not reset and not path.exists():
+        raise NberRealNormalizeError(f"Missing thread/listing index at {path}")
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA journal_mode=OFF")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("CREATE TABLE IF NOT EXISTS seen_threads (thread_id TEXT PRIMARY KEY)")
+    conn.execute("CREATE TABLE IF NOT EXISTS row_hashes (row_hash TEXT PRIMARY KEY)")
+    conn.execute("CREATE TABLE IF NOT EXISTS listing_ids (listing_id TEXT PRIMARY KEY, matched INTEGER NOT NULL DEFAULT 0)")
+    return conn
+
+
+def _id_index_is_valid(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        conn = _open_id_index(path, reset=False)
+        try:
+            conn.execute("SELECT COUNT(*) FROM listing_ids").fetchone()
+            conn.execute("SELECT COUNT(*) FROM seen_threads").fetchone()
+            conn.execute("SELECT COUNT(*) FROM row_hashes").fetchone()
+            return True
+        finally:
+            conn.close()
+    except sqlite3.DatabaseError:
+        return False
+
+
+def _id_index_contains(conn: sqlite3.Connection, table: str, column: str, value: str) -> bool:
+    _validate_index_table_column(table, column)
+    if not value:
+        return False
+    return conn.execute(f"SELECT 1 FROM {table} WHERE {column} = ? LIMIT 1", (value,)).fetchone() is not None
+
+
+def _id_index_insert(conn: sqlite3.Connection, table: str, column: str, value: str) -> bool:
+    _validate_index_table_column(table, column)
+    if not value:
+        return False
+    cursor = conn.execute(f"INSERT OR IGNORE INTO {table} ({column}) VALUES (?)", (value,))
+    return cursor.rowcount > 0
+
+
+def _validate_index_table_column(table: str, column: str) -> None:
+    allowed = {"seen_threads": "thread_id", "row_hashes": "row_hash", "listing_ids": "listing_id"}
+    if allowed.get(table) != column:
+        raise NberRealNormalizeError(f"Invalid internal index reference {table}.{column}")
+
+
+def _listing_id_stats(conn: sqlite3.Connection) -> dict[str, Any]:
+    distinct = int(conn.execute("SELECT COUNT(*) FROM listing_ids").fetchone()[0])
+    matched = int(conn.execute("SELECT COUNT(*) FROM listing_ids WHERE matched = 1").fetchone()[0])
+    unmatched_examples = [
+        row[0]
+        for row in conn.execute("SELECT listing_id FROM listing_ids WHERE matched = 0 ORDER BY listing_id LIMIT 25")
+    ]
+    return {
+        "distinct_listing_ids": distinct,
+        "matched_listing_ids": matched,
+        "unmatched_listing_ids": distinct - matched,
+        "unmatched_examples_hash": [_hash_value(value) for value in unmatched_examples],
+    }
+
+
+def _canonical_manifest_hash(manifest: dict[str, Any]) -> str:
+    canonical = json.loads(json.dumps(manifest, sort_keys=True))
+    lineage = canonical.setdefault("lineage", {})
+    lineage["normalization_manifest_hash"] = None
+    lineage["normalization_manifest_payload_hash"] = None
+    payload = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest().upper()
 
 
 def _open_text(path: Path) -> Iterator[str]:

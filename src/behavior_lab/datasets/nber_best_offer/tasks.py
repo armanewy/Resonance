@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime
+import json
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,11 @@ class NberTaskError(ValueError):
 
 def build_tasks(normalized_dir: str | Path) -> dict[str, list[dict[str, Any]]]:
     root = Path(normalized_dir)
+    if (root / "manifest.json").exists() and (root / "tables").exists():
+        return build_real_tasks_from_records(
+            _read_partitioned_table(root, "listings"),
+            _read_partitioned_table(root, "negotiation_turns"),
+        )
     listings = {str(row["listing_id"]): row for row in read_jsonl(root / "listings.jsonl")}
     turns = sorted(read_jsonl(root / "negotiation_turns.jsonl"), key=lambda row: (str(row["thread_id"]), int(row["turn_index"])))
     threads: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -23,6 +29,21 @@ def build_tasks(normalized_dir: str | Path) -> dict[str, list[dict[str, Any]]]:
     return {
         "seller_next_action": seller_next_action(listings, threads),
         "buyer_response_to_counter": buyer_response_to_counter(listings, threads),
+        "agreement": agreement_task(listings, threads),
+        "final_price_ratio": final_price_ratio_task(listings, threads),
+        "response_latency": response_latency_task(listings, threads),
+    }
+
+
+def build_real_tasks_from_records(listing_rows: list[dict[str, Any]], turn_rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    listings = {str(row["listing_id"]): row for row in listing_rows}
+    turns = sorted(turn_rows, key=lambda row: (str(row["thread_id"]), int(row["turn_index"])))
+    threads: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for turn in turns:
+        threads[str(turn["thread_id"])].append(turn)
+    return {
+        "seller_next_action": seller_next_action_real(listings, threads),
+        "buyer_response_to_counter": buyer_response_to_counter_real(listings, threads),
         "agreement": agreement_task(listings, threads),
         "final_price_ratio": final_price_ratio_task(listings, threads),
         "response_latency": response_latency_task(listings, threads),
@@ -50,6 +71,30 @@ def seller_next_action(listings: dict[str, dict[str, Any]], threads: dict[str, l
     return rows
 
 
+def seller_next_action_real(listings: dict[str, dict[str, Any]], threads: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    rows = []
+    for thread_id, turns in threads.items():
+        for index, turn in enumerate(turns):
+            if turn["actor"] != "buyer" or turn["action"] not in {"offer", "counter"}:
+                continue
+            next_turn = turns[index + 1] if index + 1 < len(turns) else None
+            label = _real_status_label(turn, counter_actor="seller", next_turn=next_turn)
+            if label is None:
+                continue
+            listing = listings[str(turn["listing_id"])]
+            rows.append(
+                _snapshot(
+                    task="seller_next_action",
+                    label=label,
+                    listing=listing,
+                    turn=turn,
+                    history=turns[: index + 1],
+                    row_id=f"{thread_id}:{turn['turn_index']}:seller_next_action",
+                )
+            )
+    return rows
+
+
 def buyer_response_to_counter(listings: dict[str, dict[str, Any]], threads: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
     rows = []
     for thread_id, turns in threads.items():
@@ -62,6 +107,30 @@ def buyer_response_to_counter(listings: dict[str, dict[str, Any]], threads: dict
                 _snapshot(
                     task="buyer_response_to_counter",
                     label=_buyer_label(next_turn),
+                    listing=listing,
+                    turn=turn,
+                    history=turns[: index + 1],
+                    row_id=f"{thread_id}:{turn['turn_index']}:buyer_response",
+                )
+            )
+    return rows
+
+
+def buyer_response_to_counter_real(listings: dict[str, dict[str, Any]], threads: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    rows = []
+    for thread_id, turns in threads.items():
+        for index, turn in enumerate(turns):
+            if turn["actor"] != "seller" or turn["action"] != "counter":
+                continue
+            next_turn = turns[index + 1] if index + 1 < len(turns) else None
+            label = _real_status_label(turn, counter_actor="buyer", next_turn=next_turn)
+            if label is None:
+                continue
+            listing = listings[str(turn["listing_id"])]
+            rows.append(
+                _snapshot(
+                    task="buyer_response_to_counter",
+                    label=label,
                     listing=listing,
                     turn=turn,
                     history=turns[: index + 1],
@@ -96,11 +165,17 @@ def agreement_task(listings: dict[str, dict[str, Any]], threads: dict[str, list[
 
 
 def agreement_label(turns: list[dict[str, Any]]) -> str | None:
+    if any(_status_id(turn.get("status_id")) in {1, 9} for turn in turns):
+        return "1"
+    if any(_status_id(turn.get("status_id")) == 8 for turn in turns):
+        return None
     if any(str(turn.get("action", "")).lower() == "accept" for turn in turns):
         return "1"
     if not turns:
         return None
     last = turns[-1]
+    if _status_id(last.get("status_id")) in {0, 2, 6}:
+        return "0"
     action = str(last.get("action", "")).lower()
     status = str(last.get("status", "")).lower()
     terminal_negative_actions = {"decline", "expire", "leave", "reject", "quit"}
@@ -113,7 +188,14 @@ def agreement_label(turns: list[dict[str, Any]]) -> str | None:
 def final_price_ratio_task(listings: dict[str, dict[str, Any]], threads: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
     rows = []
     for thread_id, turns in threads.items():
-        accepted = next((turn for turn in turns if turn["action"] == "accept" and turn["amount"] is not None), None)
+        accepted = next(
+            (
+                turn
+                for turn in turns
+                if (turn["action"] == "accept" or _status_id(turn.get("status_id")) in {1, 9}) and turn["amount"] is not None
+            ),
+            None,
+        )
         if accepted is None:
             continue
         first = turns[0]
@@ -169,7 +251,7 @@ def _snapshot(*, task: str, label: Any, listing: dict[str, Any], turn: dict[str,
         "category": listing["category"],
         "condition": listing["condition"],
         "listing_price": listing["listing_price"],
-        "reference_price": listing.get("reference_price"),
+        "reference_price": _safe_reference_price(listing),
         "current_actor": turn["actor"],
         "current_action": turn["action"],
         "current_amount": turn["amount"],
@@ -213,6 +295,41 @@ def _buyer_label(turn: dict[str, Any]) -> str:
     return "leave"
 
 
+def _real_status_label(turn: dict[str, Any], *, counter_actor: str, next_turn: dict[str, Any] | None) -> str | None:
+    status_id = _status_id(turn.get("status_id"))
+    if status_id in {1, 9}:
+        return "accept"
+    if status_id in {2, 6}:
+        return "decline"
+    if status_id == 0:
+        return "expire"
+    if status_id == 7:
+        if next_turn is not None and next_turn.get("actor") == counter_actor and next_turn.get("action") == "counter":
+            return "counter"
+        return None
+    if status_id == 8:
+        return None
+    return None
+
+
+def _status_id(value: Any) -> int | None:
+    if value in {None, ""}:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        try:
+            return int(float(str(value)))
+        except (TypeError, ValueError):
+            return None
+
+
+def _safe_reference_price(listing: dict[str, Any]) -> Any:
+    if "reference_price_unavailable_reason" in listing or "excluded_reference_price_ref_price4" in listing:
+        return None
+    return listing.get("reference_price")
+
+
 def _parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
@@ -225,3 +342,21 @@ def _sanitize_history_turn(turn: dict[str, Any]) -> dict[str, Any]:
         "amount": turn["amount"],
         "event_time": turn["event_time"],
     }
+
+
+def _read_partitioned_table(root: Path, table_name: str) -> list[dict[str, Any]]:
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    table = manifest["tables"][table_name]
+    rows: list[dict[str, Any]] = []
+    for partition in table.get("partitions", []):
+        path = Path(partition["path"])
+        if path.suffix == ".parquet":
+            import pyarrow.parquet as pq
+
+            rows.extend(pq.read_table(path).to_pylist())
+        else:
+            with path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    if line.strip():
+                        rows.append(json.loads(line))
+    return rows

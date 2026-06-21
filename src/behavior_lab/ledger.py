@@ -54,11 +54,11 @@ class _ExclusiveFileLock:
                 os.write(self._fd, json.dumps(payload, sort_keys=True).encode("utf-8"))
                 os.fsync(self._fd)
                 return
-            except FileExistsError:
+            except (FileExistsError, PermissionError):
                 if self._is_stale():
                     try:
                         self.path.unlink()
-                    except FileNotFoundError:
+                    except (FileNotFoundError, PermissionError):
                         pass
                     continue
                 if time.monotonic() >= deadline:
@@ -89,10 +89,17 @@ class _ExclusiveFileLock:
         if self._fd is not None:
             os.close(self._fd)
             self._fd = None
-        try:
-            self.path.unlink()
-        except FileNotFoundError:
-            pass
+        deadline = time.monotonic() + 1.0
+        while True:
+            try:
+                self.path.unlink()
+                return
+            except FileNotFoundError:
+                return
+            except PermissionError:
+                if time.monotonic() >= deadline:
+                    return
+                time.sleep(0.02)
 
     def __enter__(self) -> "_ExclusiveFileLock":
         self.acquire()

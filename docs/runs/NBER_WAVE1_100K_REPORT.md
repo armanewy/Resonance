@@ -2,6 +2,11 @@
 
 Status: bounded real-source Wave 1 gate run completed on 2026-06-21.
 
+This is a committed transcript of local evidence. Raw source files, normalized
+tables, and private previews remained outside the repository under
+`C:\OfferLabData`; the repository contains only metadata, hashes, command
+lines, and test code.
+
 ## Commands
 
 ```powershell
@@ -37,6 +42,26 @@ Raw data stayed outside the repository under `C:\OfferLabData\raw\nber_best_offe
 - Split manifest hash: not applicable; this was normalization only.
 - Normalized manifest path: `C:\OfferLabData\processed\nber_best_offer_100k\manifest.json`
 - Normalized manifest file hash from replication check: `6DE96D4DE6E1379D4D11E5B8E243697774345C737E007B066F3551EE0D43E288`
+
+## Audit Follow-Up
+
+After the initial 100K run, the Wave 1 audit gate required additional
+hardening before later waves:
+
+- Source inventory report generation now refuses implicit multi-gigabyte
+  downloads unless `--download` is supplied.
+- Real normalization checkpoints are tied to source hashes, headers, mapping
+  hash, command arguments, and the normalization revision.
+- Thread/listing membership and row de-duplication use a SQLite side index
+  instead of unbounded Python sets.
+- Real task labels use current-row NBER status semantics rather than synthetic
+  next-row action semantics.
+- `ref_price4` is preserved only as excluded audit metadata and does not become
+  predictor-facing `reference_price`.
+
+The numeric 100K counts below describe the original local gate run. A later
+benchmark run should regenerate manifests under the hardened normalizer before
+model comparisons are treated as Wave 2 evidence.
 
 ## Output
 

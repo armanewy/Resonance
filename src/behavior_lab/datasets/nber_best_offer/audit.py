@@ -30,7 +30,7 @@ def benchmark(normalized_dir: str | Path) -> dict[str, Any]:
             leaderboards[task_name] = {"chronological": [], "seller_disjoint": []}
             continue
         leaderboards[task_name] = {
-            "chronological": _evaluate_split(task_name, chronological_group_purged_split(rows, time_key="timestamp", group_key="thread_id"), split_type="chronological"),
+            "chronological": _evaluate_split(task_name, chronological_group_purged_split(rows, time_key="timestamp", group_key="listing_id"), split_type="chronological"),
             "seller_disjoint": _evaluate_split(task_name, group_disjoint_split(rows, group_key="seller_id"), split_type="seller_disjoint"),
         }
     return {"leaderboards": leaderboards}
@@ -44,10 +44,11 @@ def audit(normalized_dir: str | Path, *, output_path: str | Path | None = None) 
     for task_name, rows in tasks.items():
         group_split = group_disjoint_split(rows, group_key="seller_id") if rows else None
         split_checks[f"{task_name}_seller_disjoint"] = assert_disjoint_groups(group_split, group_key="seller_id") if group_split else True
-        chrono_split = chronological_group_purged_split(rows, time_key="timestamp", group_key="thread_id") if rows else None
-        split_checks[f"{task_name}_thread_disjoint"] = assert_disjoint_groups(chrono_split, group_key="thread_id") if chrono_split else True
+        chrono_split = chronological_group_purged_split(rows, time_key="timestamp", group_key="listing_id") if rows else None
+        split_checks[f"{task_name}_listing_disjoint"] = assert_disjoint_groups(chrono_split, group_key="listing_id") if chrono_split else True
         split_details[task_name] = {
             "chronological": chrono_split.sizes() if chrono_split else {"train": 0, "development": 0, "hidden": 0},
+            "chronological_group_key": "listing_id",
             "chronological_purge": {
                 "purged_group_ids": list(chrono_split.purged_group_ids),
                 "purged_rows": chrono_split.purged_rows,

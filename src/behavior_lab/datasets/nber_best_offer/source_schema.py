@@ -262,7 +262,9 @@ def _read_sheet_rows(archive: ZipFile, path: str, strings: list[str], namespaces
                 values.append("")
             raw = cell.find("main:v", namespaces)
             value = ""
-            if raw is not None and raw.text is not None:
+            if cell.attrib.get("t") == "inlineStr":
+                value = "".join(text.text or "" for text in cell.findall(".//main:t", namespaces))
+            elif raw is not None and raw.text is not None:
                 value = strings[int(raw.text)] if cell.attrib.get("t") == "s" else raw.text
             values[index] = value
         rows.append(values)

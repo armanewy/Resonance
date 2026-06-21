@@ -86,6 +86,9 @@ def replication_check(normalized_dir: str | Path, targets_path: str | Path | Non
         else:
             results.append(_result(target, passed=None, observed="not_evaluated_on_current_sample"))
     fatal_failures = [item for item in results if item["fatal"] and item["passed"] is False]
+    fatal_unevaluated = [item for item in results if item["fatal"] and item["passed"] is None]
+    bounded_structure_passed = not fatal_failures
+    full_replication_passed = not fatal_failures and not fatal_unevaluated
     return {
         "schema_version": "nber_replication_check.v1",
         "normalized_dir": str(root.resolve()),
@@ -93,7 +96,10 @@ def replication_check(normalized_dir: str | Path, targets_path: str | Path | Non
         "targets_hash": sha256_file(Path(targets_path) if targets_path is not None else default_targets_path()),
         "results": results,
         "fatal_failures": fatal_failures,
-        "passed": not fatal_failures,
+        "fatal_unevaluated": fatal_unevaluated,
+        "bounded_structure_passed": bounded_structure_passed,
+        "full_replication_passed": full_replication_passed,
+        "passed": full_replication_passed,
         "limitations": [
             "Published descriptive moments require the full official source and authors' sample restrictions.",
             "Sample-limited runs can validate structure and lineage but not published aggregate values.",
@@ -114,11 +120,18 @@ def _flatten_targets(targets: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _result(target: dict[str, Any], *, passed: bool | None, observed: Any) -> dict[str, Any]:
+    if passed is True:
+        evaluation_status = "passed"
+    elif passed is False:
+        evaluation_status = "failed"
+    else:
+        evaluation_status = "not_evaluated"
     return {
         "id": target["id"],
         "level": target.get("level"),
         "fatal": _is_fatal(target),
         "passed": passed,
+        "evaluation_status": evaluation_status,
         "observed": observed,
         "expected": target.get("expected", target.get("expected_value", target.get("formula"))),
         "tolerance": target.get("tolerance"),

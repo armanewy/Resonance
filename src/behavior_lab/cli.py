@@ -308,6 +308,7 @@ def command_nber_source_inventory(args: argparse.Namespace) -> None:
             reservoir_rows=args.reservoir_rows,
             chronological_rows_per_slice=args.chronological_rows_per_slice,
             timeout_seconds=args.timeout_seconds,
+            download=args.download,
         )
         _print_json(public_summary(manifest))
     else:
@@ -504,7 +505,7 @@ def build_parser() -> argparse.ArgumentParser:
     nber_source_inventory.add_argument("--download", action="store_true", help="Download missing official files before inventory")
     nber_source_inventory.add_argument("--sample-dir", help="Optional external directory for redacted samples")
     nber_source_inventory.add_argument("--reservoir-rows", type=_nonnegative, default=10_000)
-    nber_source_inventory.add_argument("--write-report", action="store_true", help="Write committed metadata report paths")
+    nber_source_inventory.add_argument("--write-report", action="store_true", help="Write committed metadata report paths; does not download unless --download is supplied")
     nber_source_inventory.add_argument("--manifest", default="datasets/manifests/nber_best_offer_downloads.yaml")
     nber_source_inventory.add_argument("--doc", default="docs/runs/NBER_SOURCE_INVENTORY.md")
     nber_source_inventory.add_argument("--first-sample-rows", type=_positive, default=100)

@@ -1,0 +1,49 @@
+{
+  "schema_version": "nber_wave1_100k_check_transcript.v1",
+  "generated_at_utc": "2026-06-21T00:00:00Z",
+  "evidence_role": "local_metadata_transcript",
+  "raw_records_committed": false,
+  "normalized_tables_committed": false,
+  "external_paths_required_for_rerun": true,
+  "source_id": "nber_ebay_best_offer",
+  "source_files": {
+    "anon_bo_lists.csv.gz": {
+      "bytes": 4451661738,
+      "sha256": "CEDA12755878304DAA4CA43B45C72EC98A7382A1EE646E66C33F6841E5D1A646"
+    },
+    "anon_bo_threads.csv.gz": {
+      "bytes": 1374076192,
+      "sha256": "F6FAEB797A8ED2F0C84D0E3C6E9B82F0AD2BD971DF354D57C902B478E757DEE9"
+    },
+    "Codebook.xlsx": {
+      "bytes": 15824,
+      "sha256": "3FA5E83046AC29E610CF2BCF02FD85682F93F3608C689C5A434D794C65BB6516"
+    }
+  },
+  "normalization": {
+    "git_commit": "eb1772c7abf485fc82e7db7981d43f3c063175e0",
+    "transformation_version": "nber_best_offer_real_normalization.v1",
+    "limit_threads": 100000,
+    "bucket_count": 64,
+    "partition_rows": 50000,
+    "negotiation_turn_rows": 430628,
+    "listing_rows": 231922,
+    "distinct_threads": 100000,
+    "distinct_listing_ids": 231922,
+    "unmatched_listing_ids": 0,
+    "duplicate_full_rows_removed": 9,
+    "quarantine_counts": {}
+  },
+  "replication_check": {
+    "bounded_structure_passed": true,
+    "full_replication_passed": false,
+    "fatal_unevaluated": true,
+    "reason": "Published descriptive moments require full-source authors sample restrictions."
+  },
+  "audit_follow_up_required": {
+    "rerun_under_hardened_normalizer_before_wave2_model_comparison": true,
+    "implicit_downloads_allowed": false,
+    "production_export_allowed": false,
+    "commercial_training_allowed": false
+  }
+}

@@ -181,8 +181,14 @@ def run_source_inventory(
     chronological_rows_per_slice: int = 100,
     timeout_seconds: int = 120,
     write_outputs: bool = True,
+    download: bool = False,
 ) -> dict[str, Any]:
-    """Acquire official files and write a metadata-only committed inventory."""
+    """Inventory official files and write a metadata-only committed inventory.
+
+    Full NBER files are multi-gigabyte research data. Inventorying and report
+    generation must not implicitly acquire them; callers opt in with
+    ``download=True``.
+    """
 
     config = InventoryConfig(
         raw_dir=Path(raw_dir),
@@ -204,8 +210,25 @@ def run_source_inventory(
     public_files: list[dict[str, Any]] = []
     for source in official_sources:
         destination = config.raw_dir / source["filename"]
-        download = download_once(source["url"], destination, timeout=config.timeout_seconds)
-        downloads.append(download)
+        if download:
+            download_record = download_once(source["url"], destination, timeout=config.timeout_seconds)
+        elif destination.exists():
+            download_record = {
+                "url": source["url"],
+                "path": str(destination.resolve()),
+                "status": "already_present",
+                "resumed": False,
+                "bytes_written": 0,
+                "final_size_bytes": destination.stat().st_size,
+                "sha256": sha256_file(destination),
+                "download_required_explicit_opt_in": True,
+            }
+        else:
+            raise SourceInventoryError(
+                f"Missing {destination.name} in {config.raw_dir}. "
+                "Pass --download to acquire official NBER files explicitly."
+            )
+        downloads.append(download_record)
         if source.get("kind") == "xlsx" or destination.suffix.lower() == ".xlsx":
             private_result, public_result = inventory_xlsx(destination, source)
         else:
@@ -241,8 +264,10 @@ def run_source_inventory(
             "passed": True,
             "normalization_or_modeling_performed": False,
             "raw_datasets_committed": False,
+            "implicit_downloads_performed": False if not download else None,
             "notes": [
                 "Official NBER source files were inventoried only.",
+                "Missing files are downloaded only when --download is supplied.",
                 "Raw previews and deterministic samples are stored outside the repository.",
             ],
         },
@@ -1238,6 +1263,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reservoir-rows", type=int, default=10_000)
     parser.add_argument("--chronological-rows-per-slice", type=int, default=100)
     parser.add_argument("--timeout-seconds", type=int, default=120)
+    parser.add_argument("--download", action="store_true", help="Explicitly download missing official files before inventory")
     return parser
 
 
@@ -1252,6 +1278,7 @@ def main(argv: list[str] | None = None) -> None:
         reservoir_rows=args.reservoir_rows,
         chronological_rows_per_slice=args.chronological_rows_per_slice,
         timeout_seconds=args.timeout_seconds,
+        download=args.download,
     )
     print(json.dumps(public_summary(manifest), indent=2, sort_keys=True))
 

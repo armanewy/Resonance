@@ -37,7 +37,7 @@ def build_research_leaderboards(tasks: dict[str, list[dict[str, Any]]]) -> dict[
         if not rows:
             leaderboards[task_name] = {"chronological": {}, "seller_disjoint": {}}
             continue
-        chronological = chronological_group_purged_split(rows, time_key="timestamp", group_key="thread_id")
+        chronological = chronological_group_purged_split(rows, time_key="timestamp", group_key="listing_id")
         seller_disjoint = group_disjoint_split(rows, group_key="seller_id")
         leaderboards[task_name] = {
             "chronological": predictive_suite(task_name, chronological.train, chronological.development, chronological.hidden),
@@ -71,7 +71,7 @@ def build_research_leaderboards(tasks: dict[str, list[dict[str, Any]]]) -> dict[
 def _formula_report(rows: list[dict[str, Any]], leaderboards: dict[str, Any]) -> dict[str, Any]:
     if not rows:
         return {"candidate_count": 0, "hidden_lockbox": None}
-    split = chronological_group_purged_split(rows, time_key="timestamp", group_key="thread_id")
+    split = chronological_group_purged_split(rows, time_key="timestamp", group_key="listing_id")
     black_box_hidden_loss = None
     black_box_model_id = None
     development_board = leaderboards.get("seller_next_action", {}).get("chronological", {}).get("leaderboards", {}).get("development", [])
@@ -90,7 +90,7 @@ def _formula_report(rows: list[dict[str, Any]], leaderboards: dict[str, Any]) ->
 def _calibration_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
     if len(rows) < 2:
         return {"rows": len(rows)}
-    split = chronological_group_purged_split(rows, time_key="timestamp", group_key="thread_id")
+    split = chronological_group_purged_split(rows, time_key="timestamp", group_key="listing_id")
     model = RegularizedLogisticClassifier().fit(split.train)
     predictions = model.predict(split.development).predictions
     return {

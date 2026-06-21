@@ -14,10 +14,16 @@ The repository includes `src/behavior_lab/datasets/nber_best_offer/source_invent
 
 ```powershell
 $env:OFFERLAB_DATA_ROOT = "C:\OfferLabData"
-python -m behavior_lab nber-best-offer source-inventory --download
+python -m behavior_lab nber-best-offer source-inventory --write-report
 ```
 
-The command uses atomic temporary files, byte-range resume where supported, SHA-256 hashes, gzip integrity checks, streaming row counts, redacted row summaries, and deterministic redacted samples outside the repository.
+By default the inventory command reads files already present in `OFFERLAB_DATA_ROOT/raw/nber_best_offer` and refuses to acquire missing multi-gigabyte files. Add `--download` only when official NBER acquisition is intentionally requested:
+
+```powershell
+python -m behavior_lab nber-best-offer source-inventory --download --write-report
+```
+
+When `--download` is supplied, the command uses atomic temporary files, byte-range resume where supported, SHA-256 hashes, gzip integrity checks, streaming row counts, redacted row summaries, and deterministic redacted samples outside the repository.
 
 ## Privacy And Release Boundaries
 
@@ -25,4 +31,4 @@ The command hashes anonymized item, buyer, seller, product, title, and thread id
 
 ## Current Local Evidence
 
-On 2026-06-21, only source docs and ranged header probes were used in the repository work. The full raw CSV downloads are intentionally not committed. A full inventory report should be generated locally after `--download`; the generated report may record metadata and hashes, but not raw records.
+On 2026-06-21, official raw CSV.GZ files were observed locally under `C:\OfferLabData\raw\nber_best_offer` for real-source testing. The full raw CSV downloads are intentionally not committed. Committed reports may record metadata and hashes, but not raw records or raw samples.
