@@ -10,6 +10,8 @@ python -m behavior_lab nber-best-offer inspect-schema --raw-dir C:\OfferLabData\
 python -m behavior_lab nber-best-offer normalize-real --raw-dir C:\OfferLabData\raw\nber_best_offer --output-dir C:\OfferLabData\processed\nber_best_offer_100k --limit-threads 100000 --bucket-count 64 --partition-rows 50000
 python -m behavior_lab nber-best-offer normalize-real --raw-dir C:\OfferLabData\raw\nber_best_offer --output-dir C:\OfferLabData\processed\nber_best_offer_100k --limit-threads 100000 --bucket-count 64 --partition-rows 50000
 python -m behavior_lab nber-best-offer replication-check --normalized-dir C:\OfferLabData\processed\nber_best_offer_100k
+python -m behavior_lab nber-best-offer normalize-real --raw-dir C:\OfferLabData\raw\nber_best_offer --output-dir C:\OfferLabData\processed\nber_best_offer_100k_resume_probe --limit-threads 100000 --bucket-count 64 --partition-rows 50000 --stop-after-thread-pass
+python -m behavior_lab nber-best-offer normalize-real --raw-dir C:\OfferLabData\raw\nber_best_offer --output-dir C:\OfferLabData\processed\nber_best_offer_100k_resume_probe --limit-threads 100000 --bucket-count 64 --partition-rows 50000
 ```
 
 The second `normalize-real` command was an idempotency rerun and returned the existing manifest without duplicating output.
@@ -68,6 +70,7 @@ Quarantine:
 - Normalization runtime: 700.141 seconds measured by wrapper; manifest runtime: 699.56 seconds.
 - Peak RSS during normalization: 262,041,600 bytes.
 - Output location: `C:\OfferLabData\processed\nber_best_offer_100k`
+- Resume probe: stopped after thread pass in 163.312 seconds, then resumed to completion in 474.079 seconds under `C:\OfferLabData\processed\nber_best_offer_100k_resume_probe`.
 
 ## Gate Checks
 
@@ -78,13 +81,13 @@ Passed:
 - Matching listings joined with zero unmatched listing IDs.
 - Hash lineage includes raw source hashes, mapping hash, partition hashes, Git commit, command args, and random seed.
 - Idempotent rerun returned the existing manifest without duplicate output.
+- Real resume probe completed without duplicate output or row-count drift.
 - Replication target contract was not changed after the run.
 - Frozen replication check returned no fatal failures for currently evaluable bounded-sample checks.
 
 Not yet passed:
 
 - Published descriptive moments require full-source replication of the authors' sample restrictions and were not evaluated on this bounded sample.
-- A full-scale interruption/resume test was not run on the 100,000-thread output; resume behavior is covered by fixture tests and idempotency on the completed bounded run.
 
 ## Leakage Risks
 
