@@ -548,6 +548,12 @@ class MoneyAutopilot:
                 "source_id": contract.lab,
                 "seller_shadow_value": 0.0,
                 "paper_only": True,
+                "unknown_cost_basis_count": 0,
+                "material_costs_known": True,
+                "forecast_current": True,
+                "liquidity_capacity_ok": True,
+                "deadline_open": True,
+                "action_mode": "reactive",
             }
         elif contract.lab == "offerlab_seller_pilot":
             decision = self._run_offerlab_decision(contract)
@@ -604,6 +610,11 @@ class MoneyAutopilot:
             "seller_shadow_value": entry.conservative_expected_net_value or 0.0,
             "paper_only": result["paper_only"],
             "unknown_cost_basis_count": result["unknown_cost_basis_count"],
+            "material_costs_known": int(result["unknown_cost_basis_count"]) == 0,
+            "forecast_current": True,
+            "liquidity_capacity_ok": True,
+            "deadline_open": True,
+            "action_mode": "reactive",
         }
 
     def _run_weather_decision(self, contract: ContractConfig) -> dict[str, Any]:
@@ -622,6 +633,12 @@ class MoneyAutopilot:
             "source_id": entry.provenance.get("source_id", "weather_edge"),
             "seller_shadow_value": 0.0,
             "paper_only": result["paper_only"],
+            "unknown_cost_basis_count": 0,
+            "material_costs_known": True,
+            "forecast_current": True,
+            "liquidity_capacity_ok": True,
+            "deadline_open": True,
+            "action_mode": "reactive",
         }
 
     def _run_etf_decision(self, contract: ContractConfig) -> dict[str, Any]:
@@ -646,6 +663,12 @@ class MoneyAutopilot:
             "source_id": entry.provenance.get("source_id", "etf_risk"),
             "seller_shadow_value": 0.0,
             "paper_only": result["paper_only"],
+            "unknown_cost_basis_count": 0,
+            "material_costs_known": True,
+            "forecast_current": True,
+            "liquidity_capacity_ok": True,
+            "deadline_open": True,
+            "action_mode": "reactive",
         }
 
     def _request_approval(self, contract: ContractConfig, reason: str, message: str) -> None:
@@ -851,15 +874,15 @@ class MoneyAutopilot:
             return False
         if int(decision.get("unknown_cost_basis_count", 0) or 0) > 0:
             return False
-        if decision.get("material_costs_known", True) is not True:
+        if decision.get("material_costs_known") is not True:
             return False
-        if decision.get("forecast_current", True) is not True:
+        if decision.get("forecast_current") is not True:
             return False
-        if decision.get("liquidity_capacity_ok", True) is not True:
+        if decision.get("liquidity_capacity_ok") is not True:
             return False
-        if decision.get("deadline_open", True) is not True:
+        if decision.get("deadline_open") is not True:
             return False
-        if decision.get("action_mode", "reactive") != "reactive":
+        if decision.get("action_mode") != "reactive":
             return False
         return True
 
