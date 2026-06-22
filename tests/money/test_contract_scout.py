@@ -101,6 +101,82 @@ class ContractScoutTests(unittest.TestCase):
 
         self.assertIn("high_maintenance_low_value", result["items"]["rejected"][0]["validation"]["reasons"])
 
+    def test_unrepresented_material_cost_entries_block_eligibility(self) -> None:
+        proposal = _proposal("unrepresented_cost")
+        proposal["material_costs"][0]["represented"] = False
+
+        result = _run_single(proposal)
+
+        self.assertEqual(result["accepted"], 0)
+        self.assertIn("unrepresented_material_costs", result["items"]["rejected"][0]["validation"]["reasons"])
+
+    def test_unbounded_capital_requirement_blocks_eligibility(self) -> None:
+        proposal = _proposal("unbounded_capital")
+        proposal["capital_requirement"] = {"amount": None, "currency": "USD", "bounded": False}
+
+        result = _run_single(proposal)
+
+        self.assertEqual(result["accepted"], 0)
+        self.assertIn("unbounded_capital_requirement", result["items"]["rejected"][0]["validation"]["reasons"])
+
+    def test_real_trade_action_payload_cannot_become_eligible(self) -> None:
+        proposal = _proposal("real_trade_action")
+        proposal["available_actions"].append(
+            {
+                "action_id": "submit_market_order",
+                "action_type": "broker.place_order",
+                "endpoint": "broker.place_order",
+            }
+        )
+
+        result = _run_single(proposal)
+
+        self.assertEqual(result["accepted"], 0)
+        self.assertIn("proposed_real_action", result["items"]["rejected"][0]["validation"]["reasons"])
+
+    def test_non_paper_proposal_is_rejected_not_held_for_approval(self) -> None:
+        proposal = _proposal("non_paper_contract")
+        proposal["paper_mode_feasibility"] = {
+            "paper_only": False,
+            "can_collect_prospectively": True,
+            "real_account_mutation_required": False,
+        }
+
+        result = _run_single(proposal)
+
+        self.assertEqual(result["approval_required"], 0)
+        self.assertEqual(result["items"]["rejected"][0]["validation"]["status"], "rejected")
+        self.assertFalse(result["items"]["rejected"][0]["paper_only"])
+
+    def test_malformed_max_loss_is_deterministically_rejected_not_crashed(self) -> None:
+        proposal = _proposal("malformed_max_loss")
+        proposal["maximum_possible_loss"] = {"amount": "unknown", "currency": "USD", "bounded": True}
+
+        result = _run_single(proposal)
+
+        self.assertEqual(result["accepted"], 0)
+        self.assertIn("unbounded_loss", result["items"]["rejected"][0]["validation"]["reasons"])
+
+    def test_secret_like_credentials_are_not_persisted_to_state_or_reports(self) -> None:
+        secret = "api_key=sk-live-audit-secret"
+        proposal = _proposal("secret_credential")
+        proposal["credential_requirements"] = [secret]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            scout = ContractScout(tmp)
+            scout.run(proposals=[proposal], include_seed_families=False)
+            serialized = json.dumps(
+                {
+                    "proposals": scout.proposals(),
+                    "report": scout.report(),
+                    "raw_state": (Path(tmp) / "contract_scout.jsonl").read_text(encoding="utf-8"),
+                },
+                sort_keys=True,
+            )
+
+        self.assertNotIn(secret, serialized)
+        self.assertNotIn("sk-live", serialized)
+
     def test_no_viable_proposals_records_empty_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             scout = ContractScout(tmp)
@@ -110,6 +186,49 @@ class ContractScoutTests(unittest.TestCase):
             self.assertEqual(result["rejected"], 0)
             self.assertEqual(scout.report()["proposal_counts"], {"eligible_experimental": 0, "approval_required": 0, "rejected": 0, "duplicate": 0})
             self.assertTrue(scout.verify())
+
+    def test_seed_seller_shadow_requires_private_data_approval_not_auto_eligibility(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = ContractScout(tmp).run(search_budget=3)
+
+            self.assertEqual(result["accepted"], 2)
+            self.assertEqual(result["approval_required"], 1)
+            seller = result["items"]["approval_required"][0]
+            self.assertEqual(seller["proposal"]["contract_family"], "seller_shadow")
+            self.assertEqual(seller["validation"]["approval_required"], ["private_data_ambiguity"])
+            self.assertFalse(seller["validation"]["eligible_for_experimental_portfolio"])
+
+    def test_operations_context_is_read_from_release_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp) / "scout"
+            operations = Path(tmp) / "ops"
+            operations.mkdir()
+            (operations / "operations.lock.json").write_text("{}", encoding="utf-8")
+            (operations / "release_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "release_commit": "abc123",
+                        "release_hash": "release-hash",
+                        "canary_hashes": {
+                            "weather_edge": {"canary_id": "weather-canary", "material_hash": "weather-material"},
+                            "etf_risk": {"canary_id": "etf-canary", "material_hash": "etf-material"},
+                            "offerlab_seller_pilot": {"status": "blocked", "reason": "no_seller_readiness_report"},
+                        },
+                        "source_versions": {"weather_edge": {"weather": "fixture"}, "etf_risk": {"market_data": "fixture"}},
+                        "seller_readiness": {"passed": False, "reason": "no_seller_readiness_report"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = ContractScout(state_dir, operations_state_dir=operations).run(search_budget=1)
+            context = result["operations_context"]
+
+            self.assertTrue(context["available"])
+            self.assertTrue(context["running"])
+            self.assertEqual({item["lab"] for item in context["active_contracts"]}, {"weather_edge", "etf_risk"})
+            self.assertEqual(context["blocked_contracts"], [{"lab": "offerlab_seller_pilot", "reason": "no_seller_readiness_report"}])
+            self.assertIn("weather_edge", context["source_coverage"])
 
     def test_approve_only_allows_eligible_proposals(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -234,6 +353,36 @@ class ContractScoutAgentRoleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             proposal = _proposal("real_action_attempt")
             proposal["paper_mode_feasibility"] = {"paper_only": False, "real_account_mutation_required": True}
+            response = ProviderResponse(
+                provider="mock",
+                model="static",
+                prompt_version="contract-scout-v1",
+                content={"contract_proposals": [proposal], "rejections": []},
+            )
+            context = MoneyAgentContext(campaign_id="contract-scout-test", prompt_version="contract-scout-v1")
+
+            with self.assertRaises(PermissionError):
+                FinancialResearchAgentRuntime(StaticMoneyAgentProvider(response), state_path=Path(tmp) / "agents.jsonl").run(CONTRACT_SCOUT, context)
+
+    def test_contract_scout_agent_role_rejects_real_action_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            proposal = _proposal("agent_broker_attempt")
+            proposal["available_actions"].append({"action_id": "submit_market_order", "action_type": "broker.place_order"})
+            response = ProviderResponse(
+                provider="mock",
+                model="static",
+                prompt_version="contract-scout-v1",
+                content={"contract_proposals": [proposal], "rejections": []},
+            )
+            context = MoneyAgentContext(campaign_id="contract-scout-test", prompt_version="contract-scout-v1")
+
+            with self.assertRaises(PermissionError):
+                FinancialResearchAgentRuntime(StaticMoneyAgentProvider(response), state_path=Path(tmp) / "agents.jsonl").run(CONTRACT_SCOUT, context)
+
+    def test_contract_scout_agent_role_rejects_secret_like_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            proposal = _proposal("agent_secret_attempt")
+            proposal["credential_requirements"] = ["api_key=sk-live-audit-secret"]
             response = ProviderResponse(
                 provider="mock",
                 model="static",

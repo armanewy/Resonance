@@ -240,6 +240,8 @@ class FinancialContractScout(FinancialAgentRole):
         for proposal_payload in proposals:
             if not isinstance(proposal_payload, dict):
                 raise MoneyAgentError("contract proposal must be an object")
+            if _contains_secret_like_value(proposal_payload):
+                raise MoneyAgentPermissionError("contract scout proposal contains secret-like credential material")
             if proposal_payload.get("activation_status") not in {None, "proposed", "research_only"}:
                 raise MoneyAgentPermissionError("contract scout may not activate a contract")
             if proposal_payload.get("money_allocation") not in {None, False, 0, "none"}:
@@ -248,7 +250,7 @@ class FinancialContractScout(FinancialAgentRole):
             validation = validator.validate(proposal)
             if proposal.paper_mode_feasibility.get("paper_only") is not True:
                 raise MoneyAgentPermissionError("contract scout may only propose paper-only contracts")
-            if "proposed_real_action" in validation.approval_required:
+            if "proposed_real_action" in validation.reasons or "proposed_real_action" in validation.approval_required:
                 raise MoneyAgentPermissionError("contract scout may not propose real financial action")
         _require_list(content, "rejections")
 
@@ -517,6 +519,17 @@ def _reject_code_payload(payload: dict[str, Any]) -> None:
                 raise MoneyAgentPermissionError("hypothesis scientist may not generate trading strategy source code")
         if isinstance(value, str) and ("import " in value or "def " in value or "class " in value):
             raise MoneyAgentPermissionError("hypothesis scientist may not generate source code")
+
+
+def _contains_secret_like_value(payload: Any) -> bool:
+    if isinstance(payload, dict):
+        return any(_contains_secret_like_value(value) for value in payload.values())
+    if isinstance(payload, list):
+        return any(_contains_secret_like_value(value) for value in payload)
+    if isinstance(payload, str):
+        lowered = payload.lower()
+        return any(marker in lowered for marker in ("api_key=", "apikey=", "password=", "secret=", "sk-", "token="))
+    return False
 
 
 def _is_explicitly_no_blind_access(value: Any) -> bool:

@@ -576,7 +576,7 @@ def command_money_operations(args: argparse.Namespace) -> None:
 def command_money_contract_scout(args: argparse.Namespace) -> None:
     from behavior_lab.money.contract_scout import ContractScout, load_proposals
 
-    scout = ContractScout(args.state_dir)
+    scout = ContractScout(args.state_dir, operations_state_dir=getattr(args, "operations_state_dir", None))
     command = args.contract_scout_command
     if command == "run":
         payload = scout.run(
@@ -947,6 +947,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     contract_scout_run = money_contract_scout_subparsers.add_parser("run", help="Run the autonomous paper contract scout")
     contract_scout_run.add_argument("--state-dir", default=".money_contract_scout")
+    contract_scout_run.add_argument("--operations-state-dir", help="Optional money operations state directory to inspect active, paused, and blocked contracts")
     contract_scout_run.add_argument("--proposals-json", help="Optional structured proposal list from a bounded research agent")
     contract_scout_run.add_argument("--search-budget", type=int, default=8)
     contract_scout_run.add_argument("--llm-budget-usd", type=float, default=0.0)
@@ -957,6 +958,7 @@ def build_parser() -> argparse.ArgumentParser:
     for scout_command in ("proposals", "report"):
         scout_parser = money_contract_scout_subparsers.add_parser(scout_command, help=f"Show contract scout {scout_command}")
         scout_parser.add_argument("--state-dir", default=".money_contract_scout")
+        scout_parser.add_argument("--operations-state-dir", help="Optional money operations state directory to inspect active, paused, and blocked contracts")
         scout_parser.add_argument("--output")
         scout_parser.set_defaults(func=command_money_contract_scout)
 

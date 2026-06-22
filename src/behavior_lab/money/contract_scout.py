@@ -38,13 +38,54 @@ REJECTION_REASONS = {
     "missing_available_actions",
     "missing_no_action",
     "private_data_dependency_without_acquisition_path",
+    "proposed_real_action",
     "real_account_mutation_required",
+    "unbounded_capital_requirement",
     "unbounded_loss",
     "unknown_material_costs",
     "unrepresented_material_costs",
     "unusable_payoff",
     "unusable_source_coverage",
 }
+
+REAL_ACTION_MARKERS = (
+    "accept_offer",
+    "broker",
+    "buy_order",
+    "counteroffer",
+    "exchange_order",
+    "live_order",
+    "make_offer",
+    "market_order",
+    "order_submission",
+    "place_order",
+    "place_trade",
+    "purchase",
+    "sell_order",
+    "seller_mutation",
+    "submit_market_order",
+    "submit_offer",
+    "submit_order",
+    "trade_live",
+    "transfer",
+)
+
+SECRET_KEY_MARKERS = (
+    "api_key",
+    "apikey",
+    "auth",
+    "authorization",
+    "credential",
+    "key",
+    "password",
+    "secret",
+    "session",
+    "sig",
+    "signature",
+    "token",
+)
+
+SECRET_VALUE_MARKERS = ("sk-", "api_key=", "apikey=", "password=", "secret=", "token=")
 
 
 class ContractScoutError(ValueError):
@@ -186,22 +227,26 @@ class ContractValidator:
     def validate(self, proposal: OpportunityContractProposal) -> ValidationResult:
         reasons: list[str] = []
         approvals: list[str] = []
+        capital_amount = _nonnegative_number(proposal.capital_requirement.get("amount"))
+        maximum_loss_amount = _nonnegative_number(proposal.maximum_possible_loss.get("amount"))
         checks = {
             "paper_only": proposal.paper_mode_feasibility.get("paper_only") is True,
             "outcome_unambiguous": bool(proposal.outcome.strip()) and proposal.resolution_source.get("ambiguous") is not True,
             "actions_defined": bool(proposal.available_actions),
             "no_action_defined": proposal.no_action_alternative in _action_ids(proposal.available_actions),
             "payoff_executable": proposal.payoff_formula.get("executable") is True and bool(proposal.payoff_formula.get("formula")),
-            "material_costs_represented": bool(proposal.material_costs),
+            "material_costs_represented": bool(proposal.material_costs) and all(cost.get("represented") is True for cost in proposal.material_costs),
             "no_unknown_material_costs": not any(cost.get("unknown") is True for cost in proposal.material_costs),
-            "maximum_loss_bounded": proposal.maximum_possible_loss.get("bounded") is True and float(proposal.maximum_possible_loss.get("amount", 0.0)) >= 0.0,
+            "capital_requirement_bounded": proposal.capital_requirement.get("bounded") is True and capital_amount is not None,
+            "maximum_loss_bounded": proposal.maximum_possible_loss.get("bounded") is True and maximum_loss_amount is not None,
             "source_coverage_usable": _source_coverage_usable(proposal),
+            "no_real_action_shape": not _contains_real_action_shape(proposal.available_actions),
             "no_real_account_mutation": proposal.paper_mode_feasibility.get("real_account_mutation_required") is not True,
             "maintenance_value_reasonable": _maintenance_value_reasonable(proposal),
             "private_data_available_or_acquirable": _private_data_available_or_acquirable(proposal),
         }
         if not checks["paper_only"]:
-            approvals.append("proposed_real_action")
+            reasons.append("proposed_real_action")
         if not checks["outcome_unambiguous"]:
             reasons.append("ambiguous_resolution")
         if not checks["actions_defined"]:
@@ -214,10 +259,14 @@ class ContractValidator:
             reasons.append("unrepresented_material_costs")
         if not checks["no_unknown_material_costs"]:
             reasons.append("unknown_material_costs")
+        if not checks["capital_requirement_bounded"]:
+            reasons.append("unbounded_capital_requirement")
         if not checks["maximum_loss_bounded"]:
             reasons.append("unbounded_loss")
         if not checks["source_coverage_usable"]:
             reasons.append("unusable_source_coverage")
+        if not checks["no_real_action_shape"]:
+            reasons.append("proposed_real_action")
         if not checks["no_real_account_mutation"]:
             reasons.append("real_account_mutation_required")
         if not checks["maintenance_value_reasonable"]:
@@ -228,6 +277,8 @@ class ContractValidator:
             approvals.append("unclear_license")
         if proposal.credential_requirements:
             approvals.append("missing_credential")
+        if proposal.paper_mode_feasibility.get("requires_private_data") is True and not proposal.currently_available_sources:
+            approvals.append("private_data_ambiguity")
 
         if reasons:
             status = "rejected"
@@ -245,11 +296,12 @@ class ContractValidator:
 
 
 class ContractScout:
-    def __init__(self, state_dir: str | Path = DEFAULT_STATE_DIR) -> None:
+    def __init__(self, state_dir: str | Path = DEFAULT_STATE_DIR, *, operations_state_dir: str | Path | None = None) -> None:
         self.root = Path(state_dir).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.store = AppendOnlyResearchStore(self.root / "contract_scout.jsonl")
         self.validator = ContractValidator()
+        self.operations_state_dir = Path(operations_state_dir).resolve() if operations_state_dir else None
 
     def run(
         self,
@@ -264,6 +316,7 @@ class ContractScout:
         if llm_budget_usd < 0:
             raise ContractScoutError("llm_budget_usd may not be negative")
         prior_keys = {item["equivalence_key"] for item in self._proposal_records(include_rejected=True)}
+        operations_context = self._operations_context()
         candidates = []
         if include_seed_families:
             candidates.extend(_seed_proposals())
@@ -279,11 +332,12 @@ class ContractScout:
             validation = self.validator.validate(proposal)
             payload = {
                 "schema_version": CONTRACT_SCOUT_SCHEMA_VERSION,
-                "proposal": proposal.to_dict(),
+                "proposal": _redact_sensitive(proposal.to_dict()),
                 "proposal_hash": proposal.proposal_hash(),
                 "equivalence_key": key,
                 "validation": validation.to_dict(),
-                "paper_only": True,
+                "operations_context_hash": stable_hash(operations_context),
+                "paper_only": proposal.paper_mode_feasibility.get("paper_only") is True,
                 "production_source_activation": False,
                 "money_allocation": False,
                 "generated_at": utc_now(),
@@ -315,6 +369,7 @@ class ContractScout:
             "search_budget": search_budget,
             "llm_budget_usd": llm_budget_usd,
             "llm_used": False,
+            "operations_context": operations_context,
             "accepted": len(accepted),
             "approval_required": len(approvals),
             "rejected": len(rejected),
@@ -393,8 +448,7 @@ class ContractScout:
         return {
             "schema_version": CONTRACT_SCOUT_SCHEMA_VERSION,
             "state_dir": str(self.root),
-            "active_seed_contracts": ["weather_edge", "etf_risk"],
-            "blocked_seed_contracts": [{"contract": "offerlab_seller_pilot", "reason": "seller_readiness_not_passed"}],
+            "operations_context": self._operations_context(),
             "proposal_counts": _counts(records),
             "approved_count": len(approved),
             "manual_rejection_count": len(rejected),
@@ -438,6 +492,52 @@ class ContractScout:
                 return record
         raise ContractScoutError(f"unknown proposal_id: {proposal_id}")
 
+    def _operations_context(self) -> dict[str, Any]:
+        if self.operations_state_dir is None:
+            return {
+                "available": False,
+                "reason": "operations_state_dir_not_configured",
+                "active_contracts": [],
+                "blocked_contracts": [],
+                "paused_contracts": [],
+                "source_coverage": {},
+            }
+        manifest_path = self.operations_state_dir / "release_manifest.json"
+        if not manifest_path.exists():
+            return {
+                "available": False,
+                "reason": "release_manifest_not_found",
+                "state_dir": str(self.operations_state_dir),
+                "active_contracts": [],
+                "blocked_contracts": [],
+                "paused_contracts": [],
+                "source_coverage": {},
+            }
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        canaries = manifest.get("canary_hashes", {})
+        active = []
+        blocked = []
+        for lab, payload in sorted(canaries.items()):
+            if payload.get("canary_id"):
+                active.append({"lab": lab, "canary_id": payload["canary_id"], "material_hash": payload.get("material_hash")})
+            else:
+                blocked.append({"lab": lab, "reason": payload.get("reason", "not_started")})
+        if manifest.get("seller_readiness", {}).get("passed") is not True and not any(item["lab"] == "offerlab_seller_pilot" for item in blocked):
+            blocked.append({"lab": "offerlab_seller_pilot", "reason": manifest.get("seller_readiness", {}).get("reason", "seller_readiness_not_passed")})
+        lock_path = self.operations_state_dir / "operations.lock.json"
+        return {
+            "available": True,
+            "state_dir": str(self.operations_state_dir),
+            "release_commit": manifest.get("release_commit"),
+            "release_hash": manifest.get("release_hash"),
+            "running": lock_path.exists(),
+            "active_contracts": active,
+            "blocked_contracts": blocked,
+            "paused_contracts": [] if lock_path.exists() else active,
+            "source_coverage": manifest.get("source_versions", {}),
+            "seller_readiness": manifest.get("seller_readiness", {}),
+        }
+
 
 def load_proposals(path: str | Path) -> list[dict[str, Any]]:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -450,6 +550,57 @@ def load_proposals(path: str | Path) -> list[dict[str, Any]]:
 
 def _action_ids(actions: list[dict[str, Any]]) -> set[str]:
     return {str(action.get("action_id", "")).strip() for action in actions}
+
+
+def _nonnegative_number(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number < 0:
+        return None
+    return number
+
+
+def _contains_real_action_shape(value: Any) -> bool:
+    for key, item in _walk(value):
+        text = f"{key} {item}".lower()
+        if any(marker in text for marker in REAL_ACTION_MARKERS):
+            return True
+    return False
+
+
+def _walk(value: Any, key: str = "") -> list[tuple[str, Any]]:
+    found = [(key, value)]
+    if isinstance(value, dict):
+        for child_key, child in value.items():
+            found.extend(_walk(child, str(child_key)))
+    elif isinstance(value, list):
+        for child in value:
+            found.extend(_walk(child, key))
+    return found
+
+
+def _redact_sensitive(value: Any, key: str = "") -> Any:
+    lowered_key = key.lower()
+    if isinstance(value, dict):
+        return {item_key: _redact_sensitive(item, str(item_key)) for item_key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_sensitive(item, key) for item in value]
+    if _looks_secret(key=lowered_key, value=value):
+        return "[REDACTED]"
+    return value
+
+
+def _looks_secret(*, key: str, value: Any) -> bool:
+    if any(marker in key for marker in SECRET_KEY_MARKERS):
+        text = str(value).strip().lower()
+        if any(marker in text for marker in SECRET_VALUE_MARKERS):
+            return True
+    if isinstance(value, str):
+        lowered = value.lower()
+        return any(marker in lowered for marker in SECRET_VALUE_MARKERS)
+    return False
 
 
 def _source_coverage_usable(proposal: OpportunityContractProposal) -> bool:

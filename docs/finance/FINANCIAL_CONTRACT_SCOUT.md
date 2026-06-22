@@ -30,6 +30,14 @@ $env:PYTHONPATH='src'
 python -m behavior_lab.cli money contract-scout run --state-dir C:\ResonanceOps\contract-scout
 ```
 
+To inspect the active frozen operations release while scouting:
+
+```powershell
+python -m behavior_lab.cli money contract-scout run `
+  --state-dir C:\ResonanceOps\contract-scout `
+  --operations-state-dir C:\Users\aoztu\Downloads\BehaviorDiscoveryLab-ops\operational-release-602090a
+```
+
 `run` can also accept a bounded research-agent proposal file:
 
 ```powershell
@@ -80,6 +88,10 @@ A proposal can become `eligible_experimental` only when:
 
 Credential or unclear-license cases enter the approval inbox. Hard scientific
 or accounting defects are rejected.
+
+Private-data contracts without currently available authorized sources enter the
+approval inbox as `private_data_ambiguity`; they do not become automatically
+eligible merely because an acquisition path exists.
 
 ## Seed Families
 
