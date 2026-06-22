@@ -1,0 +1,68 @@
+{
+  "verdict": "PASS",
+  "verdict_basis": "PASS after audit fixes in isolated worktree",
+  "commit_audited": "736e8636f7d12f1bc66a0b8821996b5117736f0a",
+  "feature": "Wave 3 autonomous financial opportunity portfolio",
+  "worktree": "C:\\Users\\aoztu\\Downloads\\BehaviorDiscoveryLab-audit-worktrees\\AUTONOMOUS_FINANCIAL_PORTFOLIO-736e863",
+  "findings": [
+    {
+      "id": "AUTONOMOUS_FINANCIAL_PORTFOLIO-001",
+      "severity": "High",
+      "status": "fixed",
+      "title": "Portfolio-level approval budget was enforced only within a single cycle",
+      "impact": "Repeated weekly cycles could emit new Data Mesh or Contract Scout approval notifications after the weekly approval budget was already consumed.",
+      "fixed_by": [
+        "src/behavior_lab/money/portfolio.py:493",
+        "src/behavior_lab/money/portfolio.py:630",
+        "src/behavior_lab/money/portfolio.py:648",
+        "tests/money/test_opportunity_portfolio.py:86"
+      ]
+    },
+    {
+      "id": "AUTONOMOUS_FINANCIAL_PORTFOLIO-002",
+      "severity": "Medium",
+      "status": "fixed",
+      "title": "Portfolio notifications and weekly reports did not redact local filesystem paths",
+      "impact": "A local source path could disclose usernames or private directory structure if notifications or reports left the local machine.",
+      "fixed_by": [
+        "src/behavior_lab/money/portfolio.py:730",
+        "src/behavior_lab/money/portfolio.py:741",
+        "src/behavior_lab/money/portfolio.py:748",
+        "tests/money/test_opportunity_portfolio.py:107"
+      ]
+    }
+  ],
+  "audit_questions": {
+    "paper_only_no_real_actions": "PASS",
+    "blocked_contract_isolation": "PASS",
+    "budget_allocation_signals": "PASS",
+    "human_attention_budgets": "PASS_AFTER_FIX",
+    "notification_kinds_limited": "PASS",
+    "contract_scout_boundaries": "PASS",
+    "data_mesh_experimental_only": "PASS",
+    "scheduling_and_no_repeated_blind_eval": "PASS",
+    "weekly_report_required_fields": "PASS",
+    "secrets_and_local_paths_redacted": "PASS_AFTER_FIX",
+    "full_suite": "PASS"
+  },
+  "tests_run": [
+    {
+      "command": "python -m pytest tests/money/test_opportunity_portfolio.py -q",
+      "result": "passed"
+    },
+    {
+      "command": "python -m pytest tests/money/test_contract_scout.py tests/finance_data/test_data_mesh.py tests/money/test_autopilot.py tests/money/test_canary.py tests/money/test_operations.py -q",
+      "result": "passed"
+    },
+    {
+      "command": "python -m pytest -q",
+      "result": "passed"
+    }
+  ],
+  "changed_files": [
+    "src/behavior_lab/money/portfolio.py",
+    "tests/money/test_opportunity_portfolio.py",
+    "docs/audits/AUTONOMOUS_FINANCIAL_PORTFOLIO_736E863_AUDIT.md",
+    "docs/audits/AUTONOMOUS_FINANCIAL_PORTFOLIO_736E863_AUDIT.json"
+  ]
+}

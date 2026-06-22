@@ -83,6 +83,48 @@ class OpportunityPortfolioTests(unittest.TestCase):
             self.assertTrue(result["notifications"]["forbidden_notifications_suppressed"])
             self.assertTrue(result["notifications"]["suppressed"])
 
+    def test_approval_budget_is_enforced_across_weekly_cycles(self) -> None:
+        contract = PortfolioContract(
+            contract_id="missing-source",
+            contract_family="compute_cost_avoidance",
+            title="Missing source",
+            lab=None,
+            status="experimental",
+            source_config={"provider": "fixture", "source_id": "missing_public_source"},
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            portfolio = AutonomousFinancialOpportunityPortfolio(tmp, budget=AttentionBudget(approvals_per_week=1), contracts=[contract])
+
+            first = portfolio.run_cycle(schedule="weekly", as_of="2026-06-22T12:00:00+00:00")
+            second = portfolio.run_cycle(schedule="weekly", as_of="2026-06-23T12:00:00+00:00")
+
+            self.assertEqual(sum(1 for item in first["notifications"]["notifications"] if item["kind"] == "approval_required"), 1)
+            self.assertFalse(any(item["kind"] == "approval_required" for item in second["notifications"]["notifications"]))
+            self.assertTrue(any(item.get("suppressed_reason") == "approval_budget_exhausted" for item in second["notifications"]["suppressed"]))
+            self.assertEqual(second["weekly_report"]["human_attention_budget"]["approvals_per_week"]["used"], 1)
+            self.assertEqual(second["weekly_report"]["human_attention_budget"]["approvals_per_week"]["remaining"], 0)
+
+    def test_notifications_and_weekly_report_redact_local_paths(self) -> None:
+        contract = PortfolioContract(
+            contract_id="path-source",
+            contract_family="compute_cost_avoidance",
+            title="Path source",
+            lab=None,
+            status="experimental",
+            source_config={"provider": "fixture", "source_id": r"C:\Users\aoztu\private_data\source.csv"},
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            result = AutonomousFinancialOpportunityPortfolio(tmp, budget=AttentionBudget(approvals_per_week=2), contracts=[contract]).run_cycle(
+                schedule="weekly",
+                as_of="2026-06-22T12:00:00+00:00",
+            )
+
+            notification_text = json.dumps(result["notifications"], sort_keys=True)
+            report_text = json.dumps(result["weekly_report"], sort_keys=True)
+            self.assertNotIn(r"C:\Users\aoztu", notification_text)
+            self.assertNotIn(r"C:\Users\aoztu", report_text)
+            self.assertIn("[REDACTED_LOCAL_PATH]", notification_text)
+
     def test_data_mesh_source_acquisition_is_integrated_without_production_activation(self) -> None:
         contract = PortfolioContract(
             contract_id="compute",

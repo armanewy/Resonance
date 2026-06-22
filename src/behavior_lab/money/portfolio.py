@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import timedelta
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from behavior_lab.core import parse_time, stable_hash, to_jsonable, utc_now
@@ -223,7 +225,7 @@ class AutonomousFinancialOpportunityPortfolio:
         data_result = self._run_data_acquisition(schedule, contracts, mesh_manifests or [], fixtures_by_source or {}, source_catalog or [])
         autopilot_result = self._run_paper_autopilot(contracts, allocation, schedule)
         candidate_work = self._run_research_tasks(contracts, allocation, schedule)
-        notifications = self._notifications(autopilot_result=autopilot_result, scout_result=scout_result, data_result=data_result)
+        notifications = self._notifications(autopilot_result=autopilot_result, scout_result=scout_result, data_result=data_result, evaluated_at=timestamp)
         weekly_report = self.weekly_report(
             allocation=allocation,
             autopilot_result=autopilot_result,
@@ -319,7 +321,7 @@ class AutonomousFinancialOpportunityPortfolio:
             "sources_retired": source_counts["retired"],
             "failures_not_repeated": _failures_not_repeated(self.store.all_events()),
             "notifications": notifications or {"notifications": [], "suppressed": []},
-            "human_attention_budget": _attention_budget_status(self.budget, notifications or {"notifications": []}),
+            "human_attention_budget": _attention_budget_status(self.budget, notifications or {"notifications": []}, events=self.store.all_events()),
             "paper_only": True,
             "production_state": dict(REAL_ACTION_FLAGS),
         }
@@ -488,9 +490,12 @@ class AutonomousFinancialOpportunityPortfolio:
         self.store.append("opportunity_portfolio_research_tasks_completed", payload)
         return payload
 
-    def _notifications(self, *, autopilot_result: dict[str, Any], scout_result: dict[str, Any], data_result: dict[str, Any]) -> dict[str, Any]:
+    def _notifications(self, *, autopilot_result: dict[str, Any], scout_result: dict[str, Any], data_result: dict[str, Any], evaluated_at: str | None = None) -> dict[str, Any]:
         notifications: list[dict[str, Any]] = []
         suppressed: list[dict[str, Any]] = []
+        usage = _historical_attention_usage(self.store.all_events(), evaluated_at or utc_now())
+        approvals_seen = usage["approvals_per_week"]
+        alerts_seen = usage["alerts_per_day"]
         for approval in scout_result.get("items", {}).get("approval_required", []):
             notifications.append({"kind": "approval_required", "reason": approval.get("validation", {}).get("approval_required", []), "proposal_id": approval.get("proposal", {}).get("proposal_id")})
         for item in data_result.get("missing_source_families", []):
@@ -502,8 +507,6 @@ class AutonomousFinancialOpportunityPortfolio:
             if event.get("isolated_failure"):
                 notifications.append({"kind": "operational_failure_requires_authority", "contract_id": event.get("contract_id"), "reason": event.get("error_type")})
         notifications = [item for item in notifications if item.get("kind") in NOTIFICATION_KINDS]
-        approvals_seen = 0
-        alerts_seen = 0
         kept = []
         for item in notifications:
             if item["kind"] == "approval_required":
@@ -518,6 +521,7 @@ class AutonomousFinancialOpportunityPortfolio:
                     continue
             kept.append({**item, "real_action_executed": False})
         payload = {
+            "evaluated_at": evaluated_at or utc_now(),
             "notifications": _redact_sensitive(kept),
             "suppressed": _redact_sensitive(suppressed),
             "forbidden_notifications_suppressed": True,
@@ -623,10 +627,13 @@ def _research_cost(report: dict[str, Any]) -> float:
     return round(float(usage.get("research_cost_usd", 0.0) or 0.0) + float(usage.get("api_cost_usd", 0.0) or 0.0), 2)
 
 
-def _attention_budget_status(budget: AttentionBudget, notifications: dict[str, Any]) -> dict[str, Any]:
+def _attention_budget_status(budget: AttentionBudget, notifications: dict[str, Any], events: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     items = notifications.get("notifications", []) if isinstance(notifications, dict) else []
-    approvals = sum(1 for item in items if item.get("kind") == "approval_required")
-    alerts = sum(1 for item in items if item.get("kind") == "prospectively_verified_paper_opportunity")
+    current_approvals = sum(1 for item in items if item.get("kind") == "approval_required")
+    current_alerts = sum(1 for item in items if item.get("kind") == "prospectively_verified_paper_opportunity")
+    usage = _historical_attention_usage(events or [], str(notifications.get("evaluated_at") or utc_now()))
+    approvals = max(current_approvals, usage["approvals_per_week"])
+    alerts = max(current_alerts, usage["alerts_per_day"])
     return {
         "approvals_per_week": {"limit": budget.approvals_per_week, "used": approvals, "remaining": max(0, budget.approvals_per_week - approvals)},
         "alerts_per_day": {"limit": budget.alerts_per_day, "used": alerts, "remaining": max(0, budget.alerts_per_day - alerts)},
@@ -636,6 +643,26 @@ def _attention_budget_status(budget: AttentionBudget, notifications: dict[str, A
         "source_trial_budget": budget.source_trial_budget,
         "candidate_evaluation_budget": budget.candidate_evaluation_budget,
     }
+
+
+def _historical_attention_usage(events: list[dict[str, Any]], evaluated_at: str) -> dict[str, int]:
+    now = parse_time(evaluated_at)
+    approvals = 0
+    alerts = 0
+    for event in events:
+        if event.get("event_type") != "opportunity_portfolio_notifications_evaluated":
+            continue
+        payload = event.get("payload", {})
+        try:
+            event_time = parse_time(str(payload.get("evaluated_at") or event.get("written_at")))
+        except Exception:
+            continue
+        emitted = payload.get("notifications", []) if isinstance(payload, dict) else []
+        if now - timedelta(days=7) <= event_time <= now:
+            approvals += sum(1 for item in emitted if item.get("kind") == "approval_required")
+        if event_time.date() == now.date():
+            alerts += sum(1 for item in emitted if item.get("kind") == "prospectively_verified_paper_opportunity")
+    return {"approvals_per_week": approvals, "alerts_per_day": alerts}
 
 
 def _source_counts(data_result: dict[str, Any]) -> dict[str, int]:
@@ -711,9 +738,19 @@ def _redact_sensitive(value: Any) -> Any:
         return redacted
     if isinstance(value, list):
         return [_redact_sensitive(item) for item in value]
+    if isinstance(value, str) and _local_path_like(value):
+        return "[REDACTED_LOCAL_PATH]"
     if isinstance(value, str) and _secret_like(value):
         return "[REDACTED]"
     return value
+
+
+def _local_path_like(value: str) -> bool:
+    if re.search(r"(?i)(?:^|[\s\"'=])(?:[a-z]:[\\/]|\\\\)[^\s\"']+", value):
+        return True
+    if re.search(r"(?<!:)//", value):
+        return False
+    return bool(re.search(r"(?:^|[\s\"'=])/(?:users|home|var|tmp|private|mnt|volumes)/[^\s\"']+", value, flags=re.IGNORECASE))
 
 
 def _secret_like(value: str) -> bool:
