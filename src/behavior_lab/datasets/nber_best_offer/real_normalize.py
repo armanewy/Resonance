@@ -531,36 +531,40 @@ def _write_turn_partitions(
                 if batch:
                     conn.executemany("INSERT INTO rows VALUES (?, ?, ?, ?, ?)", batch)
             conn.commit()
-            for (thread_id,) in conn.execute("SELECT DISTINCT thread_id FROM rows ORDER BY thread_id"):
-                cursor = conn.execute(
-                    "SELECT payload FROM rows WHERE thread_id = ? ORDER BY sort_time, offer_type, amount",
-                    (thread_id,),
-                )
-                for index, (payload,) in enumerate(cursor, start=1):
-                    row = json.loads(payload)
-                    try:
-                        normalized = _normalize_thread_row(row, turn_index=index)
-                    except Exception:
-                        quarantine.add("thread_normalization_error", row, source_file=bucket.name, line_number=index)
-                        continue
-                    rows_out.append(normalized)
-                    _update_turn_summary(stats, normalized)
-                    if len(rows_out) >= partition_rows:
-                        partitions.append(
-                            _write_or_resume_partition(
-                                table_dir,
-                                "negotiation_turns",
-                                "turns",
-                                part_index,
-                                rows_out,
-                                checkpoint_dir=checkpoint_dir,
-                                signature=signature,
-                                resume=resume,
-                            )
+            conn.execute("CREATE INDEX rows_thread_sort_idx ON rows (thread_id, sort_time, offer_type, amount)")
+            conn.commit()
+            current_thread_id = None
+            turn_index = 0
+            for thread_id, payload in conn.execute("SELECT thread_id, payload FROM rows ORDER BY thread_id, sort_time, offer_type, amount"):
+                if thread_id != current_thread_id:
+                    current_thread_id = thread_id
+                    turn_index = 1
+                else:
+                    turn_index += 1
+                row = json.loads(payload)
+                try:
+                    normalized = _normalize_thread_row(row, turn_index=turn_index)
+                except Exception:
+                    quarantine.add("thread_normalization_error", row, source_file=bucket.name, line_number=turn_index)
+                    continue
+                rows_out.append(normalized)
+                _update_turn_summary(stats, normalized)
+                if len(rows_out) >= partition_rows:
+                    partitions.append(
+                        _write_or_resume_partition(
+                            table_dir,
+                            "negotiation_turns",
+                            "turns",
+                            part_index,
+                            rows_out,
+                            checkpoint_dir=checkpoint_dir,
+                            signature=signature,
+                            resume=resume,
                         )
-                        total += len(rows_out)
-                        rows_out = []
-                        part_index += 1
+                    )
+                    total += len(rows_out)
+                    rows_out = []
+                    part_index += 1
         finally:
             conn.close()
             if staging_path.exists():
