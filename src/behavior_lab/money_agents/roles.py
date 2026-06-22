@@ -148,6 +148,18 @@ MUTATING_TOOL_FRAGMENTS = (
     "trade",
 )
 
+CONTRACT_SCOUT_AUTHORITY_FIELD_REASONS = {
+    "activate_contract": "production activation",
+    "activate_source": "production activation",
+    "activation_status": "production activation",
+    "capital_allocation": "money allocation",
+    "contract_activation": "production activation",
+    "money_allocation": "money allocation",
+    "production_activation": "production activation",
+    "production_source_activation": "production activation",
+    "source_activation": "production activation",
+}
+
 
 @dataclass(frozen=True)
 class FinancialAgentRole:
@@ -242,21 +254,12 @@ class FinancialContractScout(FinancialAgentRole):
                 raise MoneyAgentError("contract proposal must be an object")
             if _contains_secret_like_value(proposal_payload):
                 raise MoneyAgentPermissionError("contract scout proposal contains secret-like credential material")
-            if proposal_payload.get("activation_status") not in {None, "proposed", "research_only"}:
-                raise MoneyAgentPermissionError("contract scout may not activate a contract")
-            for field_name in (
-                "activate_contract",
-                "activate_source",
-                "capital_allocation",
-                "contract_activation",
-                "production_activation",
-                "production_source_activation",
-                "source_activation",
-            ):
-                if _authority_requested(proposal_payload.get(field_name)):
+            for _path, field_name, value in _walk(proposal_payload):
+                requested = _contract_scout_authority_requested(field_name, value)
+                if requested == "production activation":
                     raise MoneyAgentPermissionError("contract scout may not request production activation")
-            if _authority_requested(proposal_payload.get("money_allocation")):
-                raise MoneyAgentPermissionError("contract scout may not allocate money")
+                if requested == "money allocation":
+                    raise MoneyAgentPermissionError("contract scout may not allocate money")
             try:
                 proposal = OpportunityContractProposal.from_dict(proposal_payload)
             except Exception as exc:
@@ -554,6 +557,15 @@ def _authority_requested(value: Any) -> bool:
     if isinstance(value, (dict, list, tuple, set)) and not value:
         return False
     return True
+
+
+def _contract_scout_authority_requested(field_name: str, value: Any) -> str | None:
+    reason = CONTRACT_SCOUT_AUTHORITY_FIELD_REASONS.get(field_name)
+    if reason is None:
+        return None
+    if field_name == "activation_status":
+        return reason if value not in {None, "proposed", "research_only"} else None
+    return reason if _authority_requested(value) else None
 
 
 def _is_explicitly_no_blind_access(value: Any) -> bool:

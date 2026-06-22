@@ -206,6 +206,36 @@ class ContractScoutTests(unittest.TestCase):
         self.assertIn("production_source_activation_requested", reasons)
         self.assertIn("money_allocation_requested", reasons)
 
+    def test_nested_authority_extra_fields_are_rejected_and_preserved(self) -> None:
+        proposal = _proposal("nested_authority_request")
+        proposal["resolution_source"]["source_activation"] = {"status": "activate"}
+        proposal["paper_mode_feasibility"]["contract_activation"] = True
+        proposal["payoff_formula"]["capital_allocation"] = {"amount": 250, "currency": "USD"}
+
+        result = _run_single(proposal)
+
+        self.assertEqual(result["accepted"], 0)
+        rejected = result["items"]["rejected"][0]
+        self.assertEqual(rejected["validation"]["status"], "rejected")
+        self.assertIn("production_source_activation_requested", rejected["validation"]["reasons"])
+        self.assertIn("money_allocation_requested", rejected["validation"]["reasons"])
+        self.assertEqual(rejected["proposal"]["resolution_source"]["source_activation"], {"status": "activate"})
+        self.assertEqual(rejected["proposal"]["payoff_formula"]["capital_allocation"], {"amount": 250, "currency": "USD"})
+
+    def test_malformed_proposal_is_rejected_and_raw_shape_is_preserved(self) -> None:
+        proposal = _proposal("preserve_malformed_raw")
+        proposal["capital_requirement"] = ["unbounded", {"amount": "unknown"}]
+        proposal["audit_marker"] = {"preserve": "raw malformed shape"}
+
+        result = _run_single(proposal)
+
+        self.assertEqual(result["accepted"], 0)
+        rejected = result["items"]["rejected"][0]
+        self.assertEqual(rejected["validation"]["status"], "rejected")
+        self.assertIn("unbounded_capital_requirement", rejected["validation"]["reasons"])
+        self.assertEqual(rejected["proposal"]["capital_requirement"], ["unbounded", {"amount": "unknown"}])
+        self.assertEqual(rejected["proposal"]["audit_marker"], {"preserve": "raw malformed shape"})
+
     def test_secret_like_credentials_are_not_persisted_to_state_or_reports(self) -> None:
         secret = "api_key=sk-live-audit-secret"
         proposal = _proposal("secret_credential")
@@ -459,6 +489,26 @@ class ContractScoutAgentRoleTests(unittest.TestCase):
 
             with self.assertRaises(PermissionError):
                 FinancialResearchAgentRuntime(StaticMoneyAgentProvider(response), state_path=Path(tmp) / "agents.jsonl").run(CONTRACT_SCOUT, context)
+
+    def test_contract_scout_agent_role_rejects_nested_authority_extra_fields(self) -> None:
+        cases = [
+            ("agent_nested_activation_attempt", ("resolution_source", "activation_status"), "activated"),
+            ("agent_nested_allocation_attempt", ("payoff_formula", "capital_allocation"), {"amount": 50, "currency": "USD"}),
+        ]
+        for proposal_id, path, value in cases:
+            with self.subTest(proposal_id=proposal_id), tempfile.TemporaryDirectory() as tmp:
+                proposal = _proposal(proposal_id)
+                proposal[path[0]][path[1]] = value
+                response = ProviderResponse(
+                    provider="mock",
+                    model="static",
+                    prompt_version="contract-scout-v1",
+                    content={"contract_proposals": [proposal], "rejections": []},
+                )
+                context = MoneyAgentContext(campaign_id="contract-scout-test", prompt_version="contract-scout-v1")
+
+                with self.assertRaises(PermissionError):
+                    FinancialResearchAgentRuntime(StaticMoneyAgentProvider(response), state_path=Path(tmp) / "agents.jsonl").run(CONTRACT_SCOUT, context)
 
 
 if __name__ == "__main__":

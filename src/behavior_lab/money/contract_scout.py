@@ -98,6 +98,7 @@ PAPER_ACTION_TYPES = {
 AUTHORITY_FIELD_REASONS = {
     "activate_contract": "production_source_activation_requested",
     "activate_source": "production_source_activation_requested",
+    "activation_status": "production_source_activation_requested",
     "capital_allocation": "money_allocation_requested",
     "contract_activation": "production_source_activation_requested",
     "money_allocation": "money_allocation_requested",
@@ -681,12 +682,10 @@ def _raw_proposal_rejection_reasons(raw: Any) -> list[str]:
         reasons.append("unbounded_capital_requirement")
     if "maximum_possible_loss" in raw and not isinstance(raw.get("maximum_possible_loss"), dict):
         reasons.append("unbounded_loss")
-    for field_name, reason in AUTHORITY_FIELD_REASONS.items():
-        if field_name in raw and _authority_requested(field_name, raw.get(field_name)):
+    for field_name, value in _walk(raw):
+        reason = AUTHORITY_FIELD_REASONS.get(field_name)
+        if reason and _authority_requested(field_name, value):
             reasons.append(reason)
-    activation_status = raw.get("activation_status")
-    if activation_status not in {None, "proposed", "research_only"}:
-        reasons.append("production_source_activation_requested")
     if _contains_real_action_shape(raw.get("available_actions", [])):
         reasons.append("proposed_real_action")
     return sorted(set(reasons))

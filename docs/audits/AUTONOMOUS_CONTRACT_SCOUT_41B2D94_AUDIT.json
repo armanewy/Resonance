@@ -1,0 +1,69 @@
+{
+  "audit_id": "AUTONOMOUS_CONTRACT_SCOUT_41B2D94",
+  "verdict": "PASS_AFTER_AUDIT_FIX",
+  "commit_audited": "41b2d9470650f24814c95e8125b35a24a0fe4c1a",
+  "feature": "Autonomous Financial Contract Scout",
+  "scope": [
+    "src/behavior_lab/money/contract_scout.py",
+    "src/behavior_lab/money_agents/roles.py",
+    "tests/money/test_contract_scout.py"
+  ],
+  "findings": [
+    {
+      "id": "ACS-41B2D94-001",
+      "severity": "P1",
+      "status": "fixed_in_audit_worktree",
+      "title": "Nested activation/allocation authority fields could bypass pre-eligibility rejection",
+      "description": "The audited commit rejected top-level production activation and money allocation fields, but nested authority metadata inside otherwise valid schema objects could be silently dropped during OpportunityContractProposal coercion and allow eligibility.",
+      "references": [
+        "src/behavior_lab/money/contract_scout.py:98",
+        "src/behavior_lab/money/contract_scout.py:685",
+        "tests/money/test_contract_scout.py:209"
+      ]
+    },
+    {
+      "id": "ACS-41B2D94-002",
+      "severity": "P1",
+      "status": "fixed_in_audit_worktree",
+      "title": "Money-agent Contract Scout role only checked top-level contract authority fields",
+      "description": "The role validator had the same top-level-only blind spot, allowing nested activation_status or capital_allocation fields to be discarded after validation instead of rejected.",
+      "references": [
+        "src/behavior_lab/money_agents/roles.py:151",
+        "src/behavior_lab/money_agents/roles.py:258",
+        "src/behavior_lab/money_agents/roles.py:562",
+        "tests/money/test_contract_scout.py:493"
+      ]
+    }
+  ],
+  "audit_questions": {
+    "paper_only_no_real_actions": "PASS_AFTER_FIX",
+    "malformed_shapes_rejected_and_preserved": "PASS",
+    "extra_authority_fields_rejected_before_eligibility": "PASS_AFTER_FIX",
+    "seller_account_listing_mutations_rejected": "PASS",
+    "first_audit_blockers_still_fixed": "PASS",
+    "rejected_proposals_preserved_and_secrets_redacted": "PASS",
+    "append_only_no_real_actions_or_source_promotion": "PASS"
+  },
+  "tests_run": [
+    {
+      "command": "python -m pytest tests\\money\\test_contract_scout.py",
+      "result": "33 passed in 0.94s"
+    },
+    {
+      "command": "python -m pytest tests\\money\\test_contract_scout.py tests\\money_agents",
+      "result": "44 passed, 2 subtests passed in 0.83s"
+    },
+    {
+      "command": "python -m pytest",
+      "result": "first attempt timed out at 120s without a failure summary; rerun after final changes passed: 414 passed, 103 subtests passed in 118.29s"
+    }
+  ],
+  "fixes_made": true,
+  "changed_files": [
+    "src/behavior_lab/money/contract_scout.py",
+    "src/behavior_lab/money_agents/roles.py",
+    "tests/money/test_contract_scout.py",
+    "docs/audits/AUTONOMOUS_CONTRACT_SCOUT_41B2D94_AUDIT.md",
+    "docs/audits/AUTONOMOUS_CONTRACT_SCOUT_41B2D94_AUDIT.json"
+  ]
+}
