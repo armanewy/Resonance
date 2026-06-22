@@ -132,6 +132,17 @@ class MoneyLedgerTests(unittest.TestCase):
             replace(_entry(), taxes_or_tax_assumption_reference="tax_assumption_v1").taxes_or_tax_assumption_reference,
             "tax_assumption_v1",
         )
+        for field_name in (
+            "fees",
+            "slippage",
+            "shipping",
+            "holding_costs",
+            "return_refund_allowance",
+            "research_api_cost",
+        ):
+            with self.subTest(non_numeric_field=field_name):
+                with self.assertRaises(MoneyLedgerError):
+                    replace(_entry(), **{field_name: "unknown"})
         with self.assertRaises(MoneyLedgerError):
             replace(_entry(), evidence_state="manually_approved_real", designation="real")
         with self.assertRaises(MoneyLedgerError):

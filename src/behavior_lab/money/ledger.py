@@ -31,6 +31,14 @@ MATERIAL_ENTRY_COST_FIELDS = (
     "return_refund_allowance",
     "research_api_cost",
 )
+NUMERIC_ENTRY_COST_FIELDS = (
+    "fees",
+    "slippage",
+    "shipping",
+    "holding_costs",
+    "return_refund_allowance",
+    "research_api_cost",
+)
 IMMUTABLE_DECISION_FIELDS = (
     "contract_hash",
     "decision_timestamp",
@@ -136,6 +144,13 @@ class MoneyLedgerEntry:
         ]
         if negative_cost_fields:
             raise MoneyLedgerError(f"cost fields may not be negative: {negative_cost_fields}")
+        non_numeric_cost_fields = [
+            field_name
+            for field_name in NUMERIC_ENTRY_COST_FIELDS
+            if getattr(self, field_name) is not None and not _is_numeric(getattr(self, field_name))
+        ]
+        if non_numeric_cost_fields:
+            raise MoneyLedgerError(f"money cost fields must be numeric: {non_numeric_cost_fields}")
         if not self.action_alternatives:
             raise MoneyLedgerError("action_alternatives may not be empty")
         if self.selected_action not in self.action_alternatives:
@@ -312,4 +327,16 @@ def _is_negative_numeric(value: Any) -> bool:
             return float(value.strip()) < 0
         except ValueError:
             return False
+    return False
+
+
+def _is_numeric(value: Any) -> bool:
+    if isinstance(value, (int, float)):
+        return True
+    if isinstance(value, str):
+        try:
+            float(value.strip())
+        except ValueError:
+            return False
+        return True
     return False
