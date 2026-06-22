@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
 import io
 import json
 from pathlib import Path
@@ -64,6 +65,7 @@ class MoneyCanaryTests(unittest.TestCase):
             self.assertEqual(report["metrics"]["snapshot_count"], 60)
             self.assertEqual(report["metrics"]["elapsed_days"], 1)
             self.assertEqual(report["metrics"]["distinct_observation_periods"], 1)
+            self.assertEqual(report["metrics"]["consecutive_observation_periods"], 1)
             self.assertFalse(report["metrics"]["minimum_duration_elapsed"])
             self.assertFalse(report["final_evidence_report"]["available"])
 
@@ -71,7 +73,29 @@ class MoneyCanaryTests(unittest.TestCase):
             elapsed_report = manager.report(canary_id)
             self.assertEqual(elapsed_report["metrics"]["elapsed_days"], 60)
             self.assertEqual(elapsed_report["metrics"]["distinct_observation_periods"], 2)
+            self.assertEqual(elapsed_report["metrics"]["consecutive_observation_periods"], 1)
+            self.assertFalse(elapsed_report["metrics"]["minimum_duration_elapsed"])
             self.assertFalse(elapsed_report["final_evidence_report"]["available"])
+
+    def test_weather_canary_completion_rejects_sparse_elapsed_days(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_name:
+            manager = MoneyCanaryManager(tmp_name)
+            start = datetime(2026, 7, 1, 12, tzinfo=timezone.utc)
+            started = manager.start(
+                "weather-edge-contract",
+                CanaryOptions(lab="weather_edge", as_of=start.isoformat()),
+            )
+            canary_id = started["canary_id"]
+            for offset in range(2, 120, 2):
+                manager.resume(canary_id, as_of=(start + timedelta(days=offset)).isoformat())
+
+            report = manager.report(canary_id)
+            self.assertEqual(report["metrics"]["snapshot_count"], 60)
+            self.assertEqual(report["metrics"]["distinct_observation_periods"], 60)
+            self.assertEqual(report["metrics"]["consecutive_observation_periods"], 1)
+            self.assertGreater(report["metrics"]["elapsed_days"], 60)
+            self.assertFalse(report["metrics"]["minimum_duration_elapsed"])
+            self.assertFalse(report["final_evidence_report"]["available"])
 
     def test_weather_canary_completion_accepts_distinct_elapsed_days(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_name:
@@ -87,6 +111,7 @@ class MoneyCanaryTests(unittest.TestCase):
             report = manager.report(canary_id)
             self.assertEqual(report["metrics"]["elapsed_days"], 60)
             self.assertEqual(report["metrics"]["distinct_observation_periods"], 60)
+            self.assertEqual(report["metrics"]["consecutive_observation_periods"], 60)
             self.assertTrue(report["metrics"]["minimum_duration_elapsed"])
             self.assertTrue(report["final_evidence_report"]["available"])
 

@@ -574,6 +574,8 @@ def _aggregate_metrics(protocol: dict[str, Any], snapshots: list[dict[str, Any]]
             "minimum_duration_progress": 0.0,
             "minimum_duration_elapsed": False,
             "distinct_observation_periods": 0,
+            "consecutive_observation_periods": 0,
+            "required_observation_periods": 0,
             "elapsed_days": 0,
             "paper_pnl": 0.0,
             "seller_shadow_savings": 0.0,
@@ -588,14 +590,19 @@ def _aggregate_metrics(protocol: dict[str, Any], snapshots: list[dict[str, Any]]
     periods = _observation_periods(str(protocol["lab"]), observed_times)
     period_count = len(periods)
     required_periods = _required_observation_periods(protocol)
-    elapsed_ok = elapsed_days >= duration and period_count >= required_periods
+    consecutive_periods = _consecutive_observation_periods(str(protocol["lab"]), observed_times)
+    elapsed_ok = elapsed_days >= duration and consecutive_periods >= required_periods
     return {
         "snapshot_count": len(snapshots),
         "distinct_observation_periods": period_count,
         "required_observation_periods": required_periods,
+        "consecutive_observation_periods": consecutive_periods,
         "elapsed_days": elapsed_days,
         "minimum_duration_elapsed": elapsed_ok,
-        "minimum_duration_progress": round(min(1.0, min(elapsed_days / max(duration, 1), period_count / max(required_periods, 1))), 6),
+        "minimum_duration_progress": round(
+            min(1.0, min(elapsed_days / max(duration, 1), consecutive_periods / max(required_periods, 1))),
+            6,
+        ),
         "paper_pnl": pnl,
         "seller_shadow_savings": savings,
         "maximum_drawdown": 0.0,
@@ -607,6 +614,30 @@ def _observation_periods(lab: str, observed_times: list[Any]) -> set[str]:
     if lab == "etf_risk":
         return {f"{item.isocalendar().year}-W{item.isocalendar().week:02d}" for item in observed_times}
     return {item.date().isoformat() for item in observed_times}
+
+
+def _consecutive_observation_periods(lab: str, observed_times: list[Any]) -> int:
+    if not observed_times:
+        return 0
+    if lab == "etf_risk":
+        week_starts = sorted({item.date() - timedelta(days=item.weekday()) for item in observed_times})
+        return _longest_period_streak(week_starts, step_days=7)
+    dates = sorted({item.date() for item in observed_times})
+    return _longest_period_streak(dates, step_days=1)
+
+
+def _longest_period_streak(periods: list[Any], *, step_days: int) -> int:
+    if not periods:
+        return 0
+    best = 1
+    current = 1
+    for previous, current_period in zip(periods, periods[1:]):
+        if (current_period - previous).days == step_days:
+            current += 1
+        else:
+            current = 1
+        best = max(best, current)
+    return best
 
 
 def _required_observation_periods(protocol: dict[str, Any]) -> int:
