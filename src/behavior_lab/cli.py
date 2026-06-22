@@ -652,6 +652,42 @@ def command_money_data_mesh(args: argparse.Namespace) -> None:
     _print_json(payload)
 
 
+def command_money_opportunity_portfolio(args: argparse.Namespace) -> None:
+    from behavior_lab.finance_data.data_mesh import load_manifests
+    from behavior_lab.money.contract_scout import load_proposals
+    from behavior_lab.money.portfolio import AttentionBudget, AutonomousFinancialOpportunityPortfolio
+
+    if getattr(args, "config", None):
+        portfolio = AutonomousFinancialOpportunityPortfolio.from_config(args.config)
+    else:
+        portfolio = AutonomousFinancialOpportunityPortfolio(
+            args.state_dir,
+            budget=AttentionBudget(llm_budget_usd=float(getattr(args, "monthly_budget", 0.0) or 0.0)),
+        )
+    command = args.opportunity_portfolio_command
+    if command == "run":
+        payload = portfolio.run_cycle(
+            schedule=args.schedule,
+            scout_proposals=load_proposals(args.scout_proposals_json) if getattr(args, "scout_proposals_json", None) else None,
+            mesh_manifests=load_manifests(args.manifests_json) if getattr(args, "manifests_json", None) else None,
+            fixtures_by_source=_load_json_file(args.fixtures_json) if getattr(args, "fixtures_json", None) else None,
+            source_catalog=_load_json_file(args.source_catalog_json) if getattr(args, "source_catalog_json", None) else None,
+            as_of=getattr(args, "as_of", None),
+        )
+    elif command == "status":
+        payload = portfolio.status()
+    elif command == "approvals":
+        payload = portfolio.approvals()
+    elif command == "weekly-report":
+        payload = portfolio.weekly_report(write_event=True)
+    elif command == "allocate":
+        payload = portfolio.allocate_budget()
+    else:
+        raise SystemExit(f"unsupported opportunity-portfolio command: {command}")
+    _write_json_output(getattr(args, "output", None), payload)
+    _print_json(payload)
+
+
 def _write_json_output(output: str | None, payload: dict[str, Any]) -> None:
     if output:
         path = Path(output)
@@ -1098,6 +1134,39 @@ def build_parser() -> argparse.ArgumentParser:
     data_mesh_catalog.add_argument("--state-dir", default=".money_data_mesh")
     data_mesh_catalog.add_argument("--output")
     data_mesh_catalog.set_defaults(func=command_money_data_mesh)
+
+    money_portfolio = money_subparsers.add_parser("opportunity-portfolio", help="Run the autonomous paper financial opportunity portfolio")
+    money_portfolio_subparsers = money_portfolio.add_subparsers(dest="opportunity_portfolio_command", required=True)
+
+    portfolio_run = money_portfolio_subparsers.add_parser("run", help="Run one autonomous paper portfolio cycle")
+    portfolio_run.add_argument("--state-dir", default=".money_opportunity_portfolio")
+    portfolio_run.add_argument("--config")
+    portfolio_run.add_argument("--schedule", choices=sorted({"continuous", "nightly", "weekly", "monthly"}), default="continuous")
+    portfolio_run.add_argument("--monthly-budget", type=float, default=0.0)
+    portfolio_run.add_argument("--scout-proposals-json")
+    portfolio_run.add_argument("--manifests-json")
+    portfolio_run.add_argument("--fixtures-json")
+    portfolio_run.add_argument("--source-catalog-json")
+    portfolio_run.add_argument("--as-of")
+    portfolio_run.add_argument("--output")
+    portfolio_run.set_defaults(func=command_money_opportunity_portfolio)
+
+    for portfolio_command in ("status", "approvals", "weekly-report", "allocate"):
+        portfolio_parser = money_portfolio_subparsers.add_parser(portfolio_command, help=f"Show opportunity portfolio {portfolio_command}")
+        portfolio_parser.add_argument("--state-dir", default=".money_opportunity_portfolio")
+        portfolio_parser.add_argument("--config")
+        portfolio_parser.add_argument("--monthly-budget", type=float, default=0.0)
+        portfolio_parser.add_argument("--output")
+        portfolio_parser.set_defaults(func=command_money_opportunity_portfolio)
+
+    money_seek_value = money_subparsers.add_parser("seek-value", help="Run the paper-only autonomous value-seeking portfolio")
+    money_seek_value.add_argument("--state-dir", default=".money_opportunity_portfolio")
+    money_seek_value.add_argument("--mode", choices=["paper"], default="paper")
+    money_seek_value.add_argument("--monthly-budget", type=float, default=0.0)
+    money_seek_value.add_argument("--schedule", choices=sorted({"continuous", "nightly", "weekly", "monthly"}), default="weekly")
+    money_seek_value.add_argument("--as-of")
+    money_seek_value.add_argument("--output")
+    money_seek_value.set_defaults(func=command_money_opportunity_portfolio, opportunity_portfolio_command="run")
 
     money_canary = money_subparsers.add_parser("canary", help="Manage immutable prospective paper canaries")
     money_canary_subparsers = money_canary.add_subparsers(dest="canary_command", required=True)
