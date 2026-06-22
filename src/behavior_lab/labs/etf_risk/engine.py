@@ -230,11 +230,14 @@ class ETFRiskLab:
         cutoff = decision_cutoff or _session_cutoff(decision_date)
         history = self.provider.history(self.config.universe.asset_ids, cutoff)
         table = _price_table(history, self.config.universe.asset_ids)
-        if not table or table[-1]["market_date"] > decision_date:
-            table = [row for row in table if row["market_date"] <= decision_date]
+        table = [row for row in table if row["market_date"] <= decision_date]
+        if not table or table[-1]["market_date"] != decision_date:
+            raise ETFRiskError(
+                f"exact complete price snapshot unavailable for decision_date at decision_cutoff: {decision_date}"
+            )
         if len(table) < self.config.min_history_trading_days:
             raise ETFRiskError("insufficient authorized history before decision cutoff")
-        latest_prices = _latest_prices_for_date(history, self.config.universe.asset_ids, table[-1]["market_date"])
+        latest_prices = _latest_prices_for_date(history, self.config.universe.asset_ids, decision_date)
         forecast, features = _forecast_targets(table, self.config)
         return DecisionContext(
             decision_date=decision_date,

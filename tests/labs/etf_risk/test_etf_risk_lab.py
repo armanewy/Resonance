@@ -8,6 +8,7 @@ from behavior_lab.labs.etf_risk.commands import backfill, paper_cycle, report
 from behavior_lab.labs.etf_risk.engine import (
     ACTION_IDS,
     BASELINE_STRATEGY_IDS,
+    ETFRiskError,
     ETFRiskConfig,
     ETFRiskLab,
     allocation_weights,
@@ -127,7 +128,23 @@ def test_contract_and_allocations_are_paper_long_only_and_unlevered() -> None:
         assert abs(sum(weights.values()) - 1.0) < 1e-9
 
 
-def _provider(session_count: int, corrected_session_index: int | None = None) -> tuple[InMemoryMarketDataProvider, list[str]]:
+def test_decision_context_rejects_incomplete_decision_date_price_snapshot() -> None:
+    provider, sessions = _provider(
+        session_count=70,
+        omitted_price=(35, "GOLD"),
+    )
+    decision_date = sessions[35]
+    lab = ETFRiskLab(provider, ETFRiskConfig(min_history_trading_days=30))
+
+    with pytest_raises(ETFRiskError):
+        lab.decision_context(decision_date, decision_cutoff=f"{decision_date}T21:30:00+00:00")
+
+
+def _provider(
+    session_count: int,
+    corrected_session_index: int | None = None,
+    omitted_price: tuple[int, str] | None = None,
+) -> tuple[InMemoryMarketDataProvider, list[str]]:
     universe = default_universe()
     sessions = _sessions(date(2026, 1, 2), session_count)
     calendar = MarketCalendar("XNYS_TEST", tuple(sessions))
@@ -144,6 +161,8 @@ def _provider(session_count: int, corrected_session_index: int | None = None) ->
     for index, session in enumerate(sessions):
         for asset in universe.assets:
             levels[asset.asset_id] *= 1.0 + _daily_return(asset.role, index)
+            if omitted_price == (index, asset.asset_id):
+                continue
             prices.append(
                 AdjustedPrice(
                     asset_id=asset.asset_id,

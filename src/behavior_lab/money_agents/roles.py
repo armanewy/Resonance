@@ -103,17 +103,29 @@ FORBIDDEN_AUTHORITY_KEYS = {
     "valid_strategy",
 }
 
+FORBIDDEN_VERDICT_KEY_FRAGMENTS = (
+    "approval",
+    "approved",
+    "determines_verdict",
+    "promotion",
+    "validity",
+    "verdict",
+)
+
 
 FORBIDDEN_AUTHORITY_PHRASES = (
     "activate this source",
+    "approved for trading",
     "choose the blind winner",
     "declare strategy valid",
     "execute the trade",
+    "final verdict",
     "make an offer",
     "place the trade",
     "promote to production",
     "purchase the shares",
     "rerun the blind",
+    "source is approved",
     "strategy is valid",
     "submit an offer",
     "submit the order",
@@ -426,6 +438,8 @@ def _validate_common_boundaries(content: dict[str, Any]) -> None:
         lowered = key.lower()
         if lowered in FORBIDDEN_AUTHORITY_KEYS:
             raise MoneyAgentPermissionError(f"agent output crosses forbidden authority at {'.'.join(path)}")
+        if any(fragment in lowered for fragment in FORBIDDEN_VERDICT_KEY_FRAGMENTS):
+            raise MoneyAgentPermissionError(f"agent output may not contain verdict authority at {'.'.join(path)}")
         if "threshold" in lowered:
             raise MoneyAgentPermissionError("agents may not change statistical thresholds")
         if lowered in {"budget", "budgets"} and isinstance(value, dict):
