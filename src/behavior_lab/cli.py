@@ -57,6 +57,7 @@ from behavior_lab.offerlab import (
 )
 from behavior_lab.offerlab_models import run_sample_research_suite
 from behavior_lab.offerlab_models.benchmark_v1 import BenchmarkPaths, run_offerlab_benchmark_v1
+from behavior_lab.offerlab_models.benchmark_v2 import BenchmarkV2Paths, run_offerlab_benchmark_v2
 from behavior_lab.research_api import ResearchAPI
 from behavior_lab.runner import BatchConfig, SyntheticBatchRunner
 from behavior_lab.stress import LabStressTester
@@ -272,6 +273,22 @@ def command_offerlab_models_benchmark_v1(args: argparse.Namespace) -> None:
     raise SystemExit(
         "OfferLab Benchmark v1 is frozen and hidden-spent. "
         "Do not rerun it; create Benchmark v2 with fresh hidden cases instead."
+    )
+
+
+def command_offerlab_models_benchmark_v2(args: argparse.Namespace) -> None:
+    _print_json(
+        run_offerlab_benchmark_v2(
+            BenchmarkV2Paths(
+                normalized_dir=Path(args.normalized_dir),
+                output_path=Path(args.output),
+                doc_path=Path(args.doc),
+                model_cards_dir=Path(args.model_cards_dir),
+                protocol_path=Path(args.protocol),
+            ),
+            batch_size=args.batch_size,
+            allow_hidden_submission=args.allow_hidden_submission,
+        )
     )
 
 
@@ -673,6 +690,15 @@ def build_parser() -> argparse.ArgumentParser:
     offer_models_benchmark.add_argument("--row-cap", type=_positive, default=500)
     offer_models_benchmark.add_argument("--seed", type=int, default=20240621)
     offer_models_benchmark.set_defaults(func=command_offerlab_models_benchmark_v1)
+    offer_models_benchmark_v2 = offer_models_subparsers.add_parser("benchmark-v2", help="Run Benchmark v2 pre-hidden development model runner")
+    offer_models_benchmark_v2.add_argument("--normalized-dir", required=True)
+    offer_models_benchmark_v2.add_argument("--output", default="reports/offerlab_benchmark_v2_pre_hidden.json")
+    offer_models_benchmark_v2.add_argument("--doc", default="docs/runs/OFFERLAB_BENCHMARK_V2_PRE_HIDDEN.md")
+    offer_models_benchmark_v2.add_argument("--model-cards-dir", default="docs/model_cards/offerlab_benchmark_v2")
+    offer_models_benchmark_v2.add_argument("--protocol", default="datasets/manifests/offerlab_benchmark_v2.yaml")
+    offer_models_benchmark_v2.add_argument("--batch-size", type=_positive, default=50_000)
+    offer_models_benchmark_v2.add_argument("--allow-hidden-submission", action="store_true", help="Reserved for gated non-test runs; raises unless pre-hidden readiness passes")
+    offer_models_benchmark_v2.set_defaults(func=command_offerlab_models_benchmark_v2)
 
     demo = subparsers.add_parser("demo", help="Run all waves end-to-end with campaign-safe lockboxes")
     demo.add_argument("--data-dir", default=".demo")
