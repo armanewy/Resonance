@@ -364,6 +364,132 @@ def command_offerlab_models_benchmark_v2_integrate(args: argparse.Namespace) -> 
     )
 
 
+def command_money_offerlab_evaluate(args: argparse.Namespace) -> None:
+    from behavior_lab.labs.offerlab_money import evaluate
+
+    _print_json(
+        evaluate(
+            args.pilot_id,
+            data_root=args.data_root,
+            money_root=args.money_root,
+            evaluation_timestamp=args.evaluation_timestamp,
+            output_path=args.output,
+        )
+    )
+
+
+def command_money_offerlab_report(args: argparse.Namespace) -> None:
+    from behavior_lab.labs.offerlab_money import report
+
+    _print_json(report(args.pilot_id, data_root=args.data_root, money_root=args.money_root, output_path=args.output))
+
+
+def command_money_weather_edge_backfill(args: argparse.Namespace) -> None:
+    from behavior_lab.labs.weather_edge import FixtureWeatherEdgeProvider, backfill
+
+    provider = FixtureWeatherEdgeProvider.from_json(args.fixture)
+    payload = backfill(provider, args.storage_root, as_of=args.as_of)
+    _write_json_output(args.output, payload)
+    _print_json(payload)
+
+
+def command_money_weather_edge_paper_cycle(args: argparse.Namespace) -> None:
+    from behavior_lab.labs.weather_edge import FixtureWeatherEdgeProvider, paper_cycle
+
+    provider = FixtureWeatherEdgeProvider.from_json(args.fixture)
+    payload = paper_cycle(provider, args.storage_root, as_of=args.as_of)
+    _write_json_output(args.output, payload)
+    _print_json(payload)
+
+
+def command_money_weather_edge_report(args: argparse.Namespace) -> None:
+    from behavior_lab.labs.weather_edge import FixtureWeatherEdgeProvider, report
+
+    provider = FixtureWeatherEdgeProvider.from_json(args.fixture) if args.fixture else None
+    payload = report(args.storage_root, provider=provider, as_of=args.as_of)
+    _write_json_output(args.output, payload)
+    _print_json(payload)
+
+
+def command_money_etf_risk_backfill(args: argparse.Namespace) -> None:
+    from behavior_lab.labs.etf_risk import ETFRiskConfig
+    from behavior_lab.labs.etf_risk.commands import backfill
+    from behavior_lab.money.integration import fixture_etf_provider
+
+    _require_demo_fixture(args.demo_fixture)
+    provider, _sessions = fixture_etf_provider(session_count=args.session_count)
+    payload = backfill(
+        provider,
+        ledger_path=args.ledger_path,
+        config=ETFRiskConfig(min_history_trading_days=args.min_history_days),
+        start=args.start,
+        end=args.end,
+    )
+    _write_json_output(args.output, payload)
+    _print_json(payload)
+
+
+def command_money_etf_risk_paper_cycle(args: argparse.Namespace) -> None:
+    from behavior_lab.labs.etf_risk import ETFRiskConfig
+    from behavior_lab.labs.etf_risk.commands import paper_cycle
+    from behavior_lab.money.integration import fixture_etf_provider
+
+    _require_demo_fixture(args.demo_fixture)
+    provider, sessions = fixture_etf_provider(session_count=args.session_count)
+    decision_cutoff = args.decision_cutoff or f"{sessions[-2]}T21:10:00+00:00"
+    payload = paper_cycle(
+        provider,
+        ledger_path=args.ledger_path,
+        config=ETFRiskConfig(min_history_trading_days=args.min_history_days),
+        decision_cutoff=decision_cutoff,
+        strategy_id=args.strategy_id,
+    )
+    _write_json_output(args.output, payload)
+    _print_json(payload)
+
+
+def command_money_etf_risk_report(args: argparse.Namespace) -> None:
+    from behavior_lab.labs.etf_risk import ETFRiskConfig
+    from behavior_lab.labs.etf_risk.commands import report
+    from behavior_lab.money.integration import fixture_etf_provider
+
+    _require_demo_fixture(args.demo_fixture)
+    provider, _sessions = fixture_etf_provider(session_count=args.session_count)
+    payload = report(
+        provider,
+        ledger_path=args.ledger_path,
+        config=ETFRiskConfig(min_history_trading_days=args.min_history_days),
+        start=args.start,
+        end=args.end,
+    )
+    _write_json_output(args.output, payload)
+    _print_json(payload)
+
+
+def command_money_wave2_integration_report(args: argparse.Namespace) -> None:
+    from behavior_lab.money.integration import run_wave2_integration_proof
+
+    _print_json(
+        run_wave2_integration_proof(
+            output_dir=args.output_dir,
+            workspace=args.workspace,
+            generated_at=args.generated_at,
+        )
+    )
+
+
+def _write_json_output(output: str | None, payload: dict[str, Any]) -> None:
+    if output:
+        path = Path(output)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _require_demo_fixture(enabled: bool) -> None:
+    if not enabled:
+        raise SystemExit("ETF Risk CLI currently requires --demo-fixture until an authorized provider adapter is wired.")
+
+
 def command_data_source_list(args: argparse.Namespace) -> None:
     _print_json({"sources": default_registry().list()})
 
@@ -585,6 +711,84 @@ def build_parser() -> argparse.ArgumentParser:
     data_source_permissions = data_source_subparsers.add_parser("permissions", help="Show allowed uses for one source")
     data_source_permissions.add_argument("source_id")
     data_source_permissions.set_defaults(func=command_data_source_permissions)
+
+    money = subparsers.add_parser("money", help="Paper-only financial decision lab utilities")
+    money_subparsers = money.add_subparsers(dest="money_command", required=True)
+
+    money_offerlab = money_subparsers.add_parser("offerlab", help="OfferLab Money paper shadow decisions")
+    money_offerlab_subparsers = money_offerlab.add_subparsers(dest="money_offerlab_command", required=True)
+    money_offerlab_evaluate = money_offerlab_subparsers.add_parser("evaluate", help="Evaluate a seller pilot into paper money ledger entries")
+    money_offerlab_evaluate.add_argument("pilot_id", metavar="PILOT_ID")
+    money_offerlab_evaluate.add_argument("--data-root", help="External seller pilot ledger root")
+    money_offerlab_evaluate.add_argument("--money-root", help="Money ledger root for this pilot")
+    money_offerlab_evaluate.add_argument("--evaluation-timestamp")
+    money_offerlab_evaluate.add_argument("--output")
+    money_offerlab_evaluate.set_defaults(func=command_money_offerlab_evaluate)
+    money_offerlab_report = money_offerlab_subparsers.add_parser("report", help="Report paper money ledger entries for one seller pilot")
+    money_offerlab_report.add_argument("pilot_id", metavar="PILOT_ID")
+    money_offerlab_report.add_argument("--data-root", help="External seller pilot ledger root")
+    money_offerlab_report.add_argument("--money-root", help="Money ledger root for this pilot")
+    money_offerlab_report.add_argument("--output")
+    money_offerlab_report.set_defaults(func=command_money_offerlab_report)
+
+    money_weather = money_subparsers.add_parser("weather-edge", help="Multicity Weather Edge paper lab")
+    money_weather_subparsers = money_weather.add_subparsers(dest="money_weather_edge_command", required=True)
+    money_weather_backfill = money_weather_subparsers.add_parser("backfill", help="Run fixture/provider historical Weather Edge backfill")
+    money_weather_backfill.add_argument("--fixture", required=True, help="Fixture JSON for a read-only Weather Edge provider")
+    money_weather_backfill.add_argument("--storage-root", required=True)
+    money_weather_backfill.add_argument("--as-of")
+    money_weather_backfill.add_argument("--output")
+    money_weather_backfill.set_defaults(func=command_money_weather_edge_backfill)
+    money_weather_cycle = money_weather_subparsers.add_parser("paper-cycle", help="Run one paper-only Weather Edge cycle")
+    money_weather_cycle.add_argument("--fixture", required=True, help="Fixture JSON for a read-only Weather Edge provider")
+    money_weather_cycle.add_argument("--storage-root", required=True)
+    money_weather_cycle.add_argument("--as-of", required=True)
+    money_weather_cycle.add_argument("--output")
+    money_weather_cycle.set_defaults(func=command_money_weather_edge_paper_cycle)
+    money_weather_report = money_weather_subparsers.add_parser("report", help="Report Weather Edge paper ledger state")
+    money_weather_report.add_argument("--storage-root", required=True)
+    money_weather_report.add_argument("--fixture", help="Optional fixture JSON for evidence-gate historical counts")
+    money_weather_report.add_argument("--as-of")
+    money_weather_report.add_argument("--output")
+    money_weather_report.set_defaults(func=command_money_weather_edge_report)
+
+    money_etf = money_subparsers.add_parser("etf-risk", help="Paper-only broad ETF risk lab")
+    money_etf_subparsers = money_etf.add_subparsers(dest="money_etf_risk_command", required=True)
+    money_etf_backfill = money_etf_subparsers.add_parser("backfill", help="Run ETF Risk walk-forward backfill with a safe fixture provider")
+    money_etf_backfill.add_argument("--ledger-path", required=True)
+    money_etf_backfill.add_argument("--demo-fixture", action="store_true", help="Use the built-in offline authorized fixture provider")
+    money_etf_backfill.add_argument("--session-count", type=_positive, default=90)
+    money_etf_backfill.add_argument("--min-history-days", type=_positive, default=35)
+    money_etf_backfill.add_argument("--start")
+    money_etf_backfill.add_argument("--end")
+    money_etf_backfill.add_argument("--output")
+    money_etf_backfill.set_defaults(func=command_money_etf_risk_backfill)
+    money_etf_cycle = money_etf_subparsers.add_parser("paper-cycle", help="Run one ETF Risk paper-only decision with a safe fixture provider")
+    money_etf_cycle.add_argument("--ledger-path", required=True)
+    money_etf_cycle.add_argument("--demo-fixture", action="store_true", help="Use the built-in offline authorized fixture provider")
+    money_etf_cycle.add_argument("--session-count", type=_positive, default=90)
+    money_etf_cycle.add_argument("--min-history-days", type=_positive, default=35)
+    money_etf_cycle.add_argument("--decision-cutoff")
+    money_etf_cycle.add_argument("--strategy-id")
+    money_etf_cycle.add_argument("--output")
+    money_etf_cycle.set_defaults(func=command_money_etf_risk_paper_cycle)
+    money_etf_report = money_etf_subparsers.add_parser("report", help="Report ETF Risk paper ledger state")
+    money_etf_report.add_argument("--ledger-path", required=True)
+    money_etf_report.add_argument("--demo-fixture", action="store_true", help="Use the built-in offline authorized fixture provider")
+    money_etf_report.add_argument("--session-count", type=_positive, default=90)
+    money_etf_report.add_argument("--min-history-days", type=_positive, default=35)
+    money_etf_report.add_argument("--start")
+    money_etf_report.add_argument("--end")
+    money_etf_report.add_argument("--output")
+    money_etf_report.set_defaults(func=command_money_etf_risk_report)
+
+    money_wave2 = money_subparsers.add_parser("wave2-integration", help="Generate Finance Wave 2 integration proof reports")
+    money_wave2_subparsers = money_wave2.add_subparsers(dest="money_wave2_command", required=True)
+    money_wave2_report = money_wave2_subparsers.add_parser("report", help="Write wave_2_integration JSON and HTML reports")
+    money_wave2_report.add_argument("--output-dir", default="reports/finance")
+    money_wave2_report.add_argument("--workspace")
+    money_wave2_report.add_argument("--generated-at", default="2026-07-04T00:00:00+00:00")
+    money_wave2_report.set_defaults(func=command_money_wave2_integration_report)
 
     benchmark_parser = subparsers.add_parser("benchmark", help="Federated benchmark utilities")
     benchmark_subparsers = benchmark_parser.add_subparsers(dest="benchmark_command", required=True)

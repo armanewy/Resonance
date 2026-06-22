@@ -1,0 +1,145 @@
+{
+  "all_required_checks_passed": true,
+  "base_wave": "FINANCE_WAVE_1",
+  "components": {
+    "etf_risk": {
+      "decision_count": 1,
+      "ledger": {
+        "all_entries_paper": true,
+        "designations": [
+          "paper"
+        ],
+        "entry_count": 1,
+        "evidence_states": [
+          "paper_decision"
+        ],
+        "ledger_valid": true,
+        "real_actions_present": false,
+        "selected_actions": [
+          "normal_exposure"
+        ]
+      },
+      "no_broker_order_api": true,
+      "no_real_trading": true,
+      "paper_only": true,
+      "real_money_eligible": false,
+      "selected_action": "normal_exposure"
+    },
+    "finance_data": {
+      "all_available_march_values": [
+        150.0,
+        50.0
+      ],
+      "cutoff_audit_passed": true,
+      "february_as_of_values": [
+        150.0
+      ],
+      "lookahead_blocked": true,
+      "march_as_of_values": [
+        50.0
+      ]
+    },
+    "money_agents": {
+      "candidate_queue": {
+        "accepted": true,
+        "determines_verdict": false,
+        "proposal_ids": [
+          "sec_companyfacts"
+        ],
+        "requires_deterministic_evaluation": true,
+        "verdict": null
+      },
+      "model": "mock-finance-model",
+      "provider": "mock-provider",
+      "role_id": "financial_source_scout",
+      "tool_call_modes": [
+        "read_only"
+      ],
+      "usage": {
+        "cost_usd": 0.01,
+        "input_tokens": 100,
+        "output_tokens": 80,
+        "total_tokens": 180
+      }
+    },
+    "offerlab_money": {
+      "benchmark_v2_role": "research_only_evidence",
+      "causal_profit_lift_claimed": false,
+      "decision_count": 2,
+      "executes_seller_actions": false,
+      "explicit_silence_count": 0,
+      "ledger": {
+        "all_entries_paper": true,
+        "designations": [
+          "paper"
+        ],
+        "entry_count": 2,
+        "evidence_states": [
+          "paper_decision"
+        ],
+        "ledger_valid": true,
+        "real_actions_present": false,
+        "selected_actions": [
+          "accept"
+        ]
+      },
+      "paper_only": true,
+      "status_counts": {
+        "completed": 2
+      },
+      "submits_seller_actions": false,
+      "unknown_cost_basis_count": 1,
+      "unknown_material_costs_prevent_eligibility": true
+    },
+    "weather_edge": {
+      "authenticates_for_trading": false,
+      "candle_extreme_used": false,
+      "decision_count": 1,
+      "executable_price": 0.55,
+      "ledger": {
+        "all_entries_paper": true,
+        "designations": [
+          "paper"
+        ],
+        "entry_count": 1,
+        "evidence_states": [
+          "paper_decision"
+        ],
+        "ledger_valid": true,
+        "real_actions_present": false,
+        "selected_actions": [
+          "buy_yes"
+        ]
+      },
+      "midpoint_used": false,
+      "order_book_quantity_preserved": true,
+      "paper_only": true,
+      "selected_action": "buy_yes",
+      "submits_orders": false
+    }
+  },
+  "fixture_only": true,
+  "generated_at": "2026-07-04T00:00:00+00:00",
+  "local_paths_omitted": true,
+  "production_state": {
+    "brokerage_connection": false,
+    "brokerage_order_submission": false,
+    "exchange_authentication": false,
+    "exchange_order_submission": false,
+    "notifications": false,
+    "real_financial_action": false,
+    "seller_mutation": false
+  },
+  "proof_hash": "e5e1c0daac9714ec1bceea9cd7db142a76f0bb8566136caf4bb40cffe144725b",
+  "required_integration_proof": {
+    "all_labs_use_shared_accounting_and_evidence_state_semantics": true,
+    "etf_fixture_creates_cash_low_or_normal_paper_decision": true,
+    "financial_data_cutoff_audits_pass": true,
+    "llm_proposals_can_enter_candidate_queue_but_not_determine_verdict": true,
+    "offerlab_fixture_creates_paper_shadow_decision_and_money_ledger_entry": true,
+    "production_seller_exchange_and_brokerage_state_remain_unchanged": true,
+    "unknown_material_costs_prevent_eligibility": true,
+    "weather_edge_fixture_creates_paper_trade_or_no_trade_entry": true
+  },
+  "schema_version": "finance_wave2_integration.v1"
+}

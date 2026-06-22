@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Finance Wave 2 Integration Proof</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2rem; color: #1f2933; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0 2rem; }
+    th, td { border: 1px solid #ccd6e0; padding: 0.5rem; text-align: left; vertical-align: top; }
+    th { background: #eef3f8; }
+    code { background: #f4f6f8; padding: 0.1rem 0.25rem; }
+  </style>
+</head>
+<body>
+  <h1>Finance Wave 2 Integration Proof</h1>
+  <p>Schema: <code>finance_wave2_integration.v1</code></p>
+  <p>Generated at: <code>2026-07-04T00:00:00+00:00</code></p>
+  <p>All required checks passed: <strong>TRUE</strong></p>
+  <h2>Required Checks</h2>
+  <table><thead><tr><th>Check</th><th>Status</th></tr></thead><tbody><tr><td>all labs use shared accounting and evidence state semantics</td><td>PASS</td></tr>
+<tr><td>etf fixture creates cash low or normal paper decision</td><td>PASS</td></tr>
+<tr><td>financial data cutoff audits pass</td><td>PASS</td></tr>
+<tr><td>llm proposals can enter candidate queue but not determine verdict</td><td>PASS</td></tr>
+<tr><td>offerlab fixture creates paper shadow decision and money ledger entry</td><td>PASS</td></tr>
+<tr><td>production seller exchange and brokerage state remain unchanged</td><td>PASS</td></tr>
+<tr><td>unknown material costs prevent eligibility</td><td>PASS</td></tr>
+<tr><td>weather edge fixture creates paper trade or no trade entry</td><td>PASS</td></tr></tbody></table>
+  <h2>Components</h2>
+  <table><thead><tr><th>Component</th><th>Decision/Role</th><th>Ledger or Queue Summary</th></tr></thead><tbody><tr><td>etf_risk</td><td>1</td><td>{&quot;all_entries_paper&quot;: true, &quot;designations&quot;: [&quot;paper&quot;], &quot;entry_count&quot;: 1, &quot;evidence_states&quot;: [&quot;paper_decision&quot;], &quot;ledger_valid&quot;: true, &quot;real_actions_present&quot;: false, &quot;selected_actions&quot;: [&quot;normal_exposure&quot;]}</td></tr>
+<tr><td>finance_data</td><td>n/a</td><td>{}</td></tr>
+<tr><td>money_agents</td><td>financial_source_scout</td><td>{&quot;accepted&quot;: true, &quot;determines_verdict&quot;: false, &quot;proposal_ids&quot;: [&quot;sec_companyfacts&quot;], &quot;requires_deterministic_evaluation&quot;: true, &quot;verdict&quot;: null}</td></tr>
+<tr><td>offerlab_money</td><td>2</td><td>{&quot;all_entries_paper&quot;: true, &quot;designations&quot;: [&quot;paper&quot;], &quot;entry_count&quot;: 2, &quot;evidence_states&quot;: [&quot;paper_decision&quot;], &quot;ledger_valid&quot;: true, &quot;real_actions_present&quot;: false, &quot;selected_actions&quot;: [&quot;accept&quot;]}</td></tr>
+<tr><td>weather_edge</td><td>1</td><td>{&quot;all_entries_paper&quot;: true, &quot;designations&quot;: [&quot;paper&quot;], &quot;entry_count&quot;: 1, &quot;evidence_states&quot;: [&quot;paper_decision&quot;], &quot;ledger_valid&quot;: true, &quot;real_actions_present&quot;: false, &quot;selected_actions&quot;: [&quot;buy_yes&quot;]}</td></tr></tbody></table>
+  <h2>Production State</h2>
+  <pre>{
+  &quot;brokerage_connection&quot;: false,
+  &quot;brokerage_order_submission&quot;: false,
+  &quot;exchange_authentication&quot;: false,
+  &quot;exchange_order_submission&quot;: false,
+  &quot;notifications&quot;: false,
+  &quot;real_financial_action&quot;: false,
+  &quot;seller_mutation&quot;: false
+}</pre>
+</body>
+</html>
