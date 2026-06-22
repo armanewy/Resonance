@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests"))
 import _bootstrap  # noqa: F401,E402
 
-from behavior_lab.datasets.nber_best_offer.real_normalize import _normalize_listing_row, normalize_real_dataset
+from behavior_lab.datasets.nber_best_offer.real_normalize import OFFICIAL_FULL_SOURCE_EXPECTATIONS, _normalize_listing_row, normalize_real_dataset, verify_full_release_evidence
 from behavior_lab.datasets.nber_best_offer.replication import replication_check, validate_replication_targets
 from behavior_lab.datasets.nber_best_offer.source_schema import (
     REAL_LISTING_COLUMNS,
@@ -135,6 +135,51 @@ class RealNberPipelineTests(unittest.TestCase):
 
             rerun = normalize_real_dataset(raw, output, full=True, bucket_count=3, partition_rows=2)
             self.assertTrue(rerun["idempotent_rerun"])
+
+    def test_full_release_evidence_rejects_manifest_boolean_forgery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = Path(tmp) / "raw"
+            output = Path(tmp) / "normalized"
+            raw.mkdir()
+            (raw / "anon_bo_lists.csv").write_text((FIXTURES / "anon_bo_lists.csv").read_text(encoding="utf-8"), encoding="utf-8")
+            (raw / "anon_bo_threads.csv").write_text((FIXTURES / "anon_bo_threads.csv").read_text(encoding="utf-8"), encoding="utf-8")
+
+            manifest = normalize_real_dataset(raw, output, full=True, bucket_count=3, partition_rows=2)
+            manifest["source_files"] = {
+                logical_name: {
+                    "path": str(Path(tmp) / f"missing_{logical_name}.csv.gz"),
+                    "sha256": expected["sha256"],
+                    "bytes": expected["bytes"],
+                }
+                for logical_name, expected in OFFICIAL_FULL_SOURCE_EXPECTATIONS.items()
+            }
+            manifest["official_source_contract"] = {
+                "matches_expected_official_sources": True,
+                "files": {
+                    logical_name: {
+                        "actual_sha256": expected["sha256"],
+                        "sha256_matches": True,
+                        "actual_bytes": expected["bytes"],
+                        "bytes_match": True,
+                    }
+                    for logical_name, expected in OFFICIAL_FULL_SOURCE_EXPECTATIONS.items()
+                },
+            }
+            manifest["audited_full_release_evidence"] = {
+                "passed": True,
+                "streaming_full_run_passed": True,
+                "official_sources_matched": True,
+                "full_run_checkpoint_validated": True,
+                "partition_hashes_verified": True,
+                "replication_contract_passed": True,
+                "independent_audit_passed": True,
+            }
+
+            report = verify_full_release_evidence(manifest)
+            self.assertFalse(report["passed"])
+            self.assertIn("source_files_verified_now", report["failures"])
+            self.assertIn("replication_artifact_verified", report["failures"])
+            self.assertIn("independent_audit_artifact_verified", report["failures"])
 
     def test_thread_checkpoint_mismatch_rebuilds_thread_pass(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

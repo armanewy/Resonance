@@ -28,6 +28,10 @@ full_unbounded_source_scan`.
   hashes before setting `streaming_full_run_passed`.
 - The manifest records disk preflight, official-source hash/byte checks, and a
   separate `audited_full_release_evidence` gate.
+- Full-release evidence verification rechecks official source files from disk
+  against the expected byte sizes and SHA-256 hashes.
+- Replication and independent-audit claims must point to JSON artifacts with
+  recorded artifact hashes; manifest booleans alone are not accepted.
 
 ## Evidence Gate
 
@@ -43,7 +47,9 @@ all of these are true:
 - `independent_audit_passed`
 
 Task generation and benchmark scope both require that stricter evidence gate
-before an unbounded full manifest can be used as full-release evidence.
+before an unbounded full manifest can be used as full-release evidence. The
+gate verifies the source files, partition files, replication artifact, and
+independent audit artifact at evaluation time.
 
 ## Data Checked
 
@@ -69,6 +75,8 @@ claiming official evidence:
 - `streaming_full_run_passed` was true.
 - `audited_full_release_evidence.passed` remained false.
 - An idempotent rerun returned the existing manifest.
+- A forged manifest with official-looking hashes, true booleans, missing source
+  files, and missing evidence artifacts was rejected.
 
 Validated by:
 

@@ -10,7 +10,9 @@
       "--full now runs the streaming/checkpoint path with no thread limit",
       "full mode and --limit-threads are mutually exclusive",
       "complete-manifest reruns revalidate output partition files before returning idempotent_rerun",
-      "task and benchmark use require verified full-release evidence rather than manifest booleans alone"
+      "task and benchmark use require verified full-release evidence rather than manifest booleans alone",
+      "official source files are rechecked from disk against expected bytes and SHA-256",
+      "replication and independent audit evidence require JSON artifact paths with matching SHA-256 hashes"
     ]
   },
   "official_evidence_gate": {
@@ -24,6 +26,10 @@
       "replication_contract_passed",
       "independent_audit_passed",
       "passed"
+    ],
+    "required_artifacts": [
+      "replication_contract_artifact",
+      "independent_audit_artifact"
     ]
   },
   "source_files_expected": {
@@ -58,7 +64,8 @@
     "streaming_full_run_passed": true,
     "audited_full_release_evidence_passed": false,
     "idempotent_rerun_verified": true,
-    "deleted_partition_rebuild_verified": true
+    "deleted_partition_rebuild_verified": true,
+    "manifest_boolean_forgery_rejected": true
   },
   "validation": {
     "targeted_commands": [

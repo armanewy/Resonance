@@ -689,7 +689,9 @@ def _audited_full_release_evidence(
         "partition_hashes_verified": partition_hashes_verified,
         "partition_integrity": partition_integrity,
         "replication_contract_passed": False,
+        "replication_contract_artifact": None,
         "independent_audit_passed": False,
+        "independent_audit_artifact": None,
         "reason": "Normalization can prove the streaming full-run path, but replication and independent audit must be recorded by separate Wave 2 checks before this becomes full-release benchmark evidence.",
     }
 
@@ -751,18 +753,24 @@ def verify_full_release_evidence(manifest: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(preflight, dict):
         preflight = {}
     partition_integrity = _manifest_partition_integrity(manifest)
+    source_file_integrity = _source_files_verify_now(manifest)
+    replication_artifact = _replication_artifact_verification(manifest, evidence)
+    independent_audit_artifact = _independent_audit_artifact_verification(manifest, evidence)
     checks = {
         "command_full_unbounded": command_args.get("full") is True and command_args.get("limit_threads") is None,
         "preflight_passed": preflight.get("passed") is True,
         "official_contract_matches": official_contract.get("matches_expected_official_sources") is True,
         "source_files_match_official_contract": _source_files_match_official_contract(manifest),
+        "source_files_verified_now": source_file_integrity["passed"],
         "streaming_full_run_passed": evidence.get("streaming_full_run_passed") is True,
         "official_sources_matched": evidence.get("official_sources_matched") is True,
         "full_run_checkpoint_validated": evidence.get("full_run_checkpoint_validated") is True,
         "partition_hashes_verified": evidence.get("partition_hashes_verified") is True,
         "partition_integrity_verified_now": partition_integrity["passed"],
         "replication_contract_passed": evidence.get("replication_contract_passed") is True,
+        "replication_artifact_verified": replication_artifact["passed"],
         "independent_audit_passed": evidence.get("independent_audit_passed") is True,
+        "independent_audit_artifact_verified": independent_audit_artifact["passed"],
         "declared_gate_passed": evidence.get("passed") is True,
     }
     failures = [name for name, passed in checks.items() if not passed]
@@ -771,7 +779,10 @@ def verify_full_release_evidence(manifest: dict[str, Any]) -> dict[str, Any]:
         "passed": not failures,
         "checks": checks,
         "failures": failures,
+        "source_file_integrity": source_file_integrity,
         "partition_integrity": partition_integrity,
+        "replication_artifact": replication_artifact,
+        "independent_audit_artifact": independent_audit_artifact,
     }
 
 
@@ -790,6 +801,143 @@ def _source_files_match_official_contract(manifest: dict[str, Any]) -> bool:
         if contract_record.get("actual_bytes") != expected["bytes"] or contract_record.get("bytes_match") is not True:
             return False
     return True
+
+
+def _source_files_verify_now(manifest: dict[str, Any]) -> dict[str, Any]:
+    source_files = manifest.get("source_files", {})
+    files: dict[str, Any] = {}
+    failures: list[str] = []
+    for logical_name, expected in OFFICIAL_FULL_SOURCE_EXPECTATIONS.items():
+        source_record = source_files.get(logical_name, {})
+        path_text = str(source_record.get("path", ""))
+        file_report: dict[str, Any] = {
+            "path": path_text or None,
+            "exists": False,
+            "bytes_match": False,
+            "sha256_match": False,
+        }
+        if not path_text:
+            failures.append(f"{logical_name}:missing_path")
+            files[logical_name] = file_report
+            continue
+        path = Path(path_text)
+        if not path.exists():
+            failures.append(f"{logical_name}:missing_file")
+            files[logical_name] = file_report
+            continue
+        actual_bytes = path.stat().st_size
+        actual_sha = sha256_file(path)
+        file_report.update(
+            {
+                "exists": True,
+                "actual_bytes": actual_bytes,
+                "expected_bytes": expected["bytes"],
+                "bytes_match": actual_bytes == expected["bytes"],
+                "actual_sha256": actual_sha,
+                "expected_sha256": expected["sha256"],
+                "sha256_match": actual_sha == expected["sha256"],
+            }
+        )
+        if actual_bytes != expected["bytes"]:
+            failures.append(f"{logical_name}:bytes_mismatch")
+        if actual_sha != expected["sha256"]:
+            failures.append(f"{logical_name}:sha256_mismatch")
+        files[logical_name] = file_report
+    return {"schema_version": "nber_source_file_integrity.v1", "passed": not failures, "files": files, "failures": failures}
+
+
+def _replication_artifact_verification(manifest: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    return _json_artifact_verification(
+        manifest,
+        evidence.get("replication_contract_artifact"),
+        artifact_name="replication_contract_artifact",
+        required_true_fields=["passed", "full_replication_passed"],
+        required_zero_fields=["fatal_failures", "fatal_unevaluated"],
+    )
+
+
+def _independent_audit_artifact_verification(manifest: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    report = _json_artifact_verification(
+        manifest,
+        evidence.get("independent_audit_artifact"),
+        artifact_name="independent_audit_artifact",
+        required_true_fields=["passed", "independent_audit_passed"],
+        required_zero_fields=[],
+    )
+    payload = report.get("payload", {})
+    if isinstance(payload, dict) and payload.get("scope") not in {None, "full_release"}:
+        report["passed"] = False
+        report.setdefault("failures", []).append("scope_not_full_release")
+    report.pop("payload", None)
+    return report
+
+
+def _json_artifact_verification(
+    manifest: dict[str, Any],
+    artifact: Any,
+    *,
+    artifact_name: str,
+    required_true_fields: list[str],
+    required_zero_fields: list[str],
+) -> dict[str, Any]:
+    failures: list[str] = []
+    if not isinstance(artifact, dict):
+        return {"schema_version": "nber_evidence_artifact_verification.v1", "artifact_name": artifact_name, "passed": False, "failures": [f"{artifact_name}:missing_or_not_object"]}
+    path_text = str(artifact.get("path", ""))
+    expected_sha = str(artifact.get("sha256", ""))
+    if not path_text:
+        failures.append("missing_path")
+        return {"schema_version": "nber_evidence_artifact_verification.v1", "artifact_name": artifact_name, "passed": False, "failures": failures}
+    path = Path(path_text)
+    if not path.exists():
+        failures.append("missing_file")
+        return {"schema_version": "nber_evidence_artifact_verification.v1", "artifact_name": artifact_name, "path": str(path), "passed": False, "failures": failures}
+    actual_sha = sha256_file(path)
+    if not expected_sha:
+        failures.append("missing_sha256")
+    elif actual_sha != expected_sha:
+        failures.append("sha256_mismatch")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        failures.append("invalid_json")
+        payload = {}
+    if not isinstance(payload, dict):
+        failures.append("payload_not_object")
+        payload = {}
+    for field in required_true_fields:
+        if payload.get(field) is not True:
+            failures.append(f"{field}_not_true")
+    for field in required_zero_fields:
+        if payload.get(field) != 0:
+            failures.append(f"{field}_not_zero")
+    if not _artifact_binds_to_manifest(manifest, payload):
+        failures.append("artifact_not_bound_to_manifest")
+    return {
+        "schema_version": "nber_evidence_artifact_verification.v1",
+        "artifact_name": artifact_name,
+        "path": str(path),
+        "sha256": actual_sha,
+        "passed": not failures,
+        "failures": failures,
+        "payload": payload,
+    }
+
+
+def _artifact_binds_to_manifest(manifest: dict[str, Any], payload: dict[str, Any]) -> bool:
+    source_hashes = manifest.get("lineage", {}).get("raw_source_hashes") or {
+        key: value.get("sha256")
+        for key, value in dict(manifest.get("source_files", {})).items()
+        if isinstance(value, dict)
+    }
+    if payload.get("raw_source_hashes") == source_hashes:
+        return True
+    if payload.get("source_hashes") == source_hashes:
+        return True
+    manifest_hash = manifest.get("lineage", {}).get("normalization_manifest_hash")
+    if manifest_hash and payload.get("normalization_manifest_hash") == manifest_hash:
+        return True
+    return False
 
 
 def _manifest_partition_integrity(manifest: dict[str, Any]) -> dict[str, Any]:

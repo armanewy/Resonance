@@ -51,7 +51,9 @@ release has not been normalized yet.
 Full-release benchmark use remains gated. Task construction and benchmark scope
 require verified official source hashes and byte sizes, current partition-file
 hash checks, full-run checkpoint validation, published-stat replication, and an
-independent audit. Hand-written manifest booleans are not sufficient evidence.
+independent audit. Verification rechecks source files from disk and requires
+hash-bound JSON artifacts for the replication and independent audit results.
+Hand-written manifest booleans are not sufficient evidence.
 
 ## Interpretation
 
