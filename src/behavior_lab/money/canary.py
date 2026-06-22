@@ -101,6 +101,20 @@ class MoneyCanaryManager:
         supplied_strategy = strategy_version or protocol["frozen_strategy"]["strategy_version"]
         if supplied_strategy != protocol["frozen_strategy"]["strategy_version"]:
             raise MoneyCanaryError("material canary component changed; start a new canary")
+        current_protocol = _protocol(
+            str(protocol["contract_id"]),
+            str(protocol["lab"]),
+            str(protocol["start_at"]),
+            CanaryOptions(
+                lab=str(protocol["lab"]),
+                as_of=str(protocol["start_at"]),
+                strategy_version=supplied_strategy,
+                source_version=str(protocol["source_versions"].get("primary", "fixture_source_v1")),
+                seller_pilot_ready=True,
+            ),
+        )
+        if current_protocol["material_hash"] != protocol["material_hash"]:
+            raise MoneyCanaryError("material canary component changed; start a new canary")
         timestamp = as_of or utc_now()
         parse_time(timestamp)
         snapshot = self._append_snapshot(protocol, timestamp, reason="resume")
@@ -302,16 +316,37 @@ def _protocol(contract_id: str, lab: str, start_at: str, options: CanaryOptions)
             "material_fields": [
                 "contract_hash",
                 "frozen_strategy.program_hash",
+                "minimum_duration_days",
+                "cadence",
                 "data_cutoff_policy",
                 "source_versions",
                 "cost_assumptions",
                 "prospective_gates",
                 "invalidation_conditions",
+                "metrics_tracked",
             ],
             "material_change_creates_new_canary": True,
         },
     }
-    material_hash = stable_hash({key: protocol[key] for key in ("contract_id", "lab", "contract_hash", "data_cutoff_policy", "source_versions", "cost_assumptions", "prospective_gates", "invalidation_conditions", "frozen_strategy")})
+    material_hash = stable_hash(
+        {
+            key: protocol[key]
+            for key in (
+                "contract_id",
+                "lab",
+                "contract_hash",
+                "minimum_duration_days",
+                "cadence",
+                "data_cutoff_policy",
+                "source_versions",
+                "cost_assumptions",
+                "prospective_gates",
+                "invalidation_conditions",
+                "frozen_strategy",
+                "metrics_tracked",
+            )
+        }
+    )
     protocol["material_hash"] = material_hash
     protocol["canary_id"] = f"canary_{material_hash[:16]}"
     return protocol

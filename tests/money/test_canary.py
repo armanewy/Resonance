@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 TESTS = ROOT / "tests"
@@ -17,6 +18,7 @@ for path in [str(ROOT), str(TESTS)]:
 import _bootstrap  # noqa: E402,F401
 
 from behavior_lab.cli import main
+import behavior_lab.money.canary as canary_module
 from behavior_lab.money.canary import CanaryOptions, MoneyCanaryError, MoneyCanaryManager, start_fixture_canaries
 
 
@@ -61,6 +63,25 @@ class MoneyCanaryTests(unittest.TestCase):
             self.assertEqual(first["protocol"]["cadence"], "weekly")
             self.assertTrue(first["protocol"]["cost_assumptions"]["transaction_costs_included"])
             self.assertFalse(first["protocol"]["cost_assumptions"]["leverage_allowed"])
+
+    def test_live_material_policy_change_is_rejected_on_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_name:
+            manager = MoneyCanaryManager(tmp_name)
+            started = manager.start(
+                "weather-edge-contract",
+                CanaryOptions(lab="weather_edge", as_of="2026-07-01T12:00:00+00:00"),
+            )
+            original_lab_protocol = canary_module._lab_protocol
+
+            def changed_lab_protocol(lab: str) -> dict[str, object]:
+                protocol = json.loads(json.dumps(original_lab_protocol(lab)))
+                if lab == "weather_edge":
+                    protocol["cost_assumptions"]["slippage_included"] = False
+                return protocol
+
+            with mock.patch.object(canary_module, "_lab_protocol", side_effect=changed_lab_protocol):
+                with self.assertRaises(MoneyCanaryError):
+                    manager.resume(started["canary_id"], as_of="2026-07-02T12:00:00+00:00")
 
     def test_offerlab_canary_requires_seller_readiness_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_name:
