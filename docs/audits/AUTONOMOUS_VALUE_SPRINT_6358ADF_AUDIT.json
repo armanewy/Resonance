@@ -1,0 +1,101 @@
+{
+  "audit": "AUTONOMOUS_VALUE_SPRINT_6358ADF",
+  "verdict": "PASS",
+  "audited_commit": "6358adf96c3b62f81c9e052409265a12afca8bdb",
+  "feature": "Wave 4 frozen 30-day Autonomous Value Sprint",
+  "top_level_decision_after_fixes": "AUTONOMY_WORKS_NO_EDGE_YET",
+  "scope": [
+    "src/behavior_lab/money/value_sprint.py",
+    "src/behavior_lab/cli.py money value-sprint run",
+    "tests/money/test_value_sprint.py",
+    "money portfolio",
+    "finance data mesh",
+    "contract scout",
+    "money autopilot"
+  ],
+  "artifact_outputs": [
+    "AUTONOMOUS_VALUE_SPRINT.html",
+    "AUTONOMOUS_VALUE_SPRINT.json",
+    "VALUE_SYSTEM_DECISION.md"
+  ],
+  "paper_only": true,
+  "production_mutation_allowed": false,
+  "findings": [
+    {
+      "severity": "P1",
+      "status": "fixed",
+      "title": "Success criteria were not fully evidence-derived",
+      "summary": "Source repair, blind/prospective survivors, candidate progress, repeated blind evaluation, and 30-day completion were hardened to derive from run evidence instead of constants or weak proxies.",
+      "references": [
+        "src/behavior_lab/money/value_sprint.py:230",
+        "src/behavior_lab/money/value_sprint.py:266",
+        "src/behavior_lab/money/value_sprint.py:330",
+        "tests/money/test_value_sprint.py:38",
+        "tests/money/test_value_sprint.py:71"
+      ]
+    },
+    {
+      "severity": "P1",
+      "status": "fixed",
+      "title": "Source repair criterion had no supporting repair event",
+      "summary": "The sprint now performs and records an experimental-only billing source repair with production activation disabled.",
+      "references": [
+        "src/behavior_lab/money/value_sprint.py:414",
+        "src/behavior_lab/money/value_sprint.py:230",
+        "tests/money/test_value_sprint.py:38"
+      ]
+    },
+    {
+      "severity": "P2",
+      "status": "fixed",
+      "title": "Public-only contract criterion used total active contracts",
+      "summary": "The criterion now counts only public sprint contract families and requires Weather Edge, ETF Risk, and compute cost avoidance.",
+      "references": [
+        "src/behavior_lab/money/value_sprint.py:407",
+        "src/behavior_lab/money/value_sprint.py:266"
+      ]
+    },
+    {
+      "severity": "P2",
+      "status": "fixed",
+      "title": "Serializable sprint payload leaked local artifact paths",
+      "summary": "Returned artifact identifiers are file names only; artifacts are still written to the configured output directory.",
+      "references": [
+        "src/behavior_lab/money/value_sprint.py:57",
+        "tests/money/test_value_sprint.py:82"
+      ]
+    }
+  ],
+  "remaining_correctness_blockers": [],
+  "required_evidence_fields": [
+    "user_attention_minutes",
+    "approvals_requested",
+    "active_contracts",
+    "usable_sources",
+    "automatically_added_sources",
+    "automatically_repaired_sources",
+    "repeated_failures_avoided_through_memory",
+    "candidate_counts",
+    "blind_survivors",
+    "prospective_survivors",
+    "paper_opportunities",
+    "no_action_decisions",
+    "resolved_paper_value",
+    "research_api_cost",
+    "source_maintenance_cost"
+  ],
+  "tests_run": [
+    {
+      "command": "python -m pytest tests/money/test_value_sprint.py -q",
+      "result": "passed"
+    },
+    {
+      "command": "python -m pytest tests/money -q",
+      "result": "passed"
+    },
+    {
+      "command": "python -m pytest -q",
+      "result": "passed"
+    }
+  ]
+}
