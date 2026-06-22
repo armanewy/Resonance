@@ -1054,6 +1054,8 @@ def _redact_secret_text(value: str) -> str:
     lowered = value.lower()
     if any(marker in lowered for marker in SECRET_VALUE_MARKERS):
         return "[REDACTED]"
+    if re.search(r"(?i)(credential|password|secret|token)", value) and re.search(r"[A-Z0-9]", value):
+        return "[REDACTED]"
     if re.search(r"(?i)(auth|authorization|bearer|credential|key|password|secret|session|sig|signature|token)=", value):
         value = re.sub(
             r"(?i)((?:[?&]|^)(?:api[_-]?key|auth|authorization|credential|credentials|key|map[_-]?key|password|secret|session|sig|signature|token|access[_-]?token)=)[^&\s]+",

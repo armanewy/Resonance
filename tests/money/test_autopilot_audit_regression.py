@@ -285,6 +285,21 @@ contracts:
             store_text = (tmp / "state" / "audit-money-lab" / "autopilot.jsonl").read_text(encoding="utf-8")
             self.assertNotIn(secret, store_text)
 
+    def test_plain_secret_bearing_decision_source_id_is_not_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
+            secret = "PLAIN_SOURCE_SECRET_456"
+            autopilot = MoneyAutopilot.from_path(_write_portfolio(tmp))
+            with patch.object(
+                MoneyAutopilot,
+                "_run_weather_decision",
+                return_value=_decision(source_id=secret),
+            ):
+                autopilot.run_once()
+
+            store_text = (tmp / "state" / "audit-money-lab" / "autopilot.jsonl").read_text(encoding="utf-8")
+            self.assertNotIn(secret, store_text)
+
     def test_bearer_credentials_in_failure_messages_are_not_persisted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_name:
             tmp = Path(tmp_name)
