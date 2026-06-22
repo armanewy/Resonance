@@ -499,6 +499,36 @@ def command_money_autopilot(args: argparse.Namespace) -> None:
         raise SystemExit(f"unsupported autopilot command: {command}")
 
 
+def command_money_canary(args: argparse.Namespace) -> None:
+    from behavior_lab.money.canary import CanaryOptions, MoneyCanaryManager
+
+    manager = MoneyCanaryManager(args.state_dir)
+    command = args.canary_command
+    if command == "start":
+        payload = manager.start(
+            args.contract_id,
+            CanaryOptions(
+                lab=args.lab,
+                as_of=args.as_of,
+                strategy_version=args.strategy_version,
+                source_version=args.source_version,
+                seller_pilot_ready=args.seller_pilot_ready,
+            ),
+        )
+    elif command == "resume":
+        payload = manager.resume(args.canary_id, as_of=args.as_of, strategy_version=args.strategy_version)
+    elif command == "status":
+        payload = manager.status(args.canary_id)
+    elif command == "report":
+        payload = manager.report(args.canary_id)
+    elif command == "invalidate":
+        payload = manager.invalidate(args.canary_id, reason=args.reason, as_of=args.as_of)
+    else:
+        raise SystemExit(f"unsupported canary command: {command}")
+    _write_json_output(getattr(args, "output", None), payload)
+    _print_json(payload)
+
+
 def _write_json_output(output: str | None, payload: dict[str, Any]) -> None:
     if output:
         path = Path(output)
@@ -841,6 +871,48 @@ def build_parser() -> argparse.ArgumentParser:
     money_autopilot_resume.add_argument("contract_id", metavar="CONTRACT_ID")
     money_autopilot_resume.add_argument("--portfolio", default="money-lab.yaml")
     money_autopilot_resume.set_defaults(func=command_money_autopilot)
+
+    money_canary = money_subparsers.add_parser("canary", help="Manage immutable prospective paper canaries")
+    money_canary_subparsers = money_canary.add_subparsers(dest="canary_command", required=True)
+
+    money_canary_start = money_canary_subparsers.add_parser("start", help="Start an immutable prospective paper canary")
+    money_canary_start.add_argument("contract_id", metavar="CONTRACT_ID")
+    money_canary_start.add_argument("--state-dir", default=".money_canaries")
+    money_canary_start.add_argument("--lab", choices=sorted({"offerlab_seller_pilot", "weather_edge", "etf_risk"}))
+    money_canary_start.add_argument("--as-of")
+    money_canary_start.add_argument("--strategy-version", default="fixture_frozen_v1")
+    money_canary_start.add_argument("--source-version", default="fixture_source_v1")
+    money_canary_start.add_argument("--seller-pilot-ready", action="store_true")
+    money_canary_start.add_argument("--output")
+    money_canary_start.set_defaults(func=command_money_canary)
+
+    money_canary_resume = money_canary_subparsers.add_parser("resume", help="Append a daily/weekly canary snapshot")
+    money_canary_resume.add_argument("canary_id", metavar="CANARY_ID")
+    money_canary_resume.add_argument("--state-dir", default=".money_canaries")
+    money_canary_resume.add_argument("--as-of")
+    money_canary_resume.add_argument("--strategy-version")
+    money_canary_resume.add_argument("--output")
+    money_canary_resume.set_defaults(func=command_money_canary)
+
+    money_canary_status = money_canary_subparsers.add_parser("status", help="Show prospective canary status")
+    money_canary_status.add_argument("canary_id", metavar="CANARY_ID")
+    money_canary_status.add_argument("--state-dir", default=".money_canaries")
+    money_canary_status.add_argument("--output")
+    money_canary_status.set_defaults(func=command_money_canary)
+
+    money_canary_report = money_canary_subparsers.add_parser("report", help="Render current canary evidence report")
+    money_canary_report.add_argument("canary_id", metavar="CANARY_ID")
+    money_canary_report.add_argument("--state-dir", default=".money_canaries")
+    money_canary_report.add_argument("--output")
+    money_canary_report.set_defaults(func=command_money_canary)
+
+    money_canary_invalidate = money_canary_subparsers.add_parser("invalidate", help="Invalidate a canary without rewriting prior snapshots")
+    money_canary_invalidate.add_argument("canary_id", metavar="CANARY_ID")
+    money_canary_invalidate.add_argument("--state-dir", default=".money_canaries")
+    money_canary_invalidate.add_argument("--reason", required=True)
+    money_canary_invalidate.add_argument("--as-of")
+    money_canary_invalidate.add_argument("--output")
+    money_canary_invalidate.set_defaults(func=command_money_canary)
 
     benchmark_parser = subparsers.add_parser("benchmark", help="Federated benchmark utilities")
     benchmark_subparsers = benchmark_parser.add_subparsers(dest="benchmark_command", required=True)
