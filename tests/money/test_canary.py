@@ -49,6 +49,47 @@ class MoneyCanaryTests(unittest.TestCase):
             self.assertFalse(any(report["production_state"].values()))
             self.assertTrue(manager.verify())
 
+    def test_weather_canary_completion_requires_elapsed_consecutive_days(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_name:
+            manager = MoneyCanaryManager(tmp_name)
+            started = manager.start(
+                "weather-edge-contract",
+                CanaryOptions(lab="weather_edge", as_of="2026-07-01T12:00:00+00:00"),
+            )
+            canary_id = started["canary_id"]
+            for _ in range(59):
+                manager.resume(canary_id, as_of="2026-07-01T12:00:00+00:00")
+
+            report = manager.report(canary_id)
+            self.assertEqual(report["metrics"]["snapshot_count"], 60)
+            self.assertEqual(report["metrics"]["elapsed_days"], 1)
+            self.assertEqual(report["metrics"]["distinct_observation_periods"], 1)
+            self.assertFalse(report["metrics"]["minimum_duration_elapsed"])
+            self.assertFalse(report["final_evidence_report"]["available"])
+
+            manager.resume(canary_id, as_of="2026-08-29T12:00:00+00:00")
+            elapsed_report = manager.report(canary_id)
+            self.assertEqual(elapsed_report["metrics"]["elapsed_days"], 60)
+            self.assertEqual(elapsed_report["metrics"]["distinct_observation_periods"], 2)
+            self.assertFalse(elapsed_report["final_evidence_report"]["available"])
+
+    def test_weather_canary_completion_accepts_distinct_elapsed_days(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_name:
+            manager = MoneyCanaryManager(tmp_name)
+            started = manager.start(
+                "weather-edge-contract",
+                CanaryOptions(lab="weather_edge", as_of="2026-07-01T12:00:00+00:00"),
+            )
+            canary_id = started["canary_id"]
+            for day in range(1, 60):
+                manager.resume(canary_id, as_of=f"2026-07-{day + 1:02d}T12:00:00+00:00" if day < 31 else f"2026-08-{day - 30:02d}T12:00:00+00:00")
+
+            report = manager.report(canary_id)
+            self.assertEqual(report["metrics"]["elapsed_days"], 60)
+            self.assertEqual(report["metrics"]["distinct_observation_periods"], 60)
+            self.assertTrue(report["metrics"]["minimum_duration_elapsed"])
+            self.assertTrue(report["final_evidence_report"]["available"])
+
     def test_strategy_change_is_rejected_on_resume_and_creates_new_canary_on_start(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_name:
             manager = MoneyCanaryManager(tmp_name)

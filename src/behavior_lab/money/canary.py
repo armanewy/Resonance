@@ -167,7 +167,7 @@ class MoneyCanaryManager:
             "counterexamples": [counterexample for item in snapshots for counterexample in item["counterexamples"]],
             "metrics": metrics,
             "final_evidence_report": {
-                "available": bool(invalidation) or metrics["minimum_duration_progress"] >= 1.0,
+                "available": bool(invalidation) or metrics["minimum_duration_elapsed"] is True,
                 "paper_only": True,
                 "real_money_allowed": False,
                 "reason": "capital_allocation_not_authorized_in_wave_4",
@@ -572,6 +572,9 @@ def _aggregate_metrics(protocol: dict[str, Any], snapshots: list[dict[str, Any]]
         return {
             "snapshot_count": 0,
             "minimum_duration_progress": 0.0,
+            "minimum_duration_elapsed": False,
+            "distinct_observation_periods": 0,
+            "elapsed_days": 0,
             "paper_pnl": 0.0,
             "seller_shadow_savings": 0.0,
             "maximum_drawdown": 0.0,
@@ -579,11 +582,34 @@ def _aggregate_metrics(protocol: dict[str, Any], snapshots: list[dict[str, Any]]
     pnl = round(sum(float(item["pnl_or_savings"].get("paper_pnl", 0.0)) for item in snapshots), 2)
     savings = round(sum(float(item["pnl_or_savings"].get("seller_shadow_savings", 0.0)) for item in snapshots), 2)
     duration = int(protocol["minimum_duration_days"])
+    observed_times = sorted(parse_time(str(item["observed_at"])) for item in snapshots)
+    start = parse_time(str(protocol["start_at"]))
+    elapsed_days = max(0, (observed_times[-1].date() - start.date()).days + 1)
+    periods = _observation_periods(str(protocol["lab"]), observed_times)
+    period_count = len(periods)
+    required_periods = _required_observation_periods(protocol)
+    elapsed_ok = elapsed_days >= duration and period_count >= required_periods
     return {
         "snapshot_count": len(snapshots),
-        "minimum_duration_progress": round(min(1.0, len(snapshots) / max(duration, 1)), 6),
+        "distinct_observation_periods": period_count,
+        "required_observation_periods": required_periods,
+        "elapsed_days": elapsed_days,
+        "minimum_duration_elapsed": elapsed_ok,
+        "minimum_duration_progress": round(min(1.0, min(elapsed_days / max(duration, 1), period_count / max(required_periods, 1))), 6),
         "paper_pnl": pnl,
         "seller_shadow_savings": savings,
         "maximum_drawdown": 0.0,
         "metrics_tracked": list(protocol["metrics_tracked"]),
     }
+
+
+def _observation_periods(lab: str, observed_times: list[Any]) -> set[str]:
+    if lab == "etf_risk":
+        return {f"{item.isocalendar().year}-W{item.isocalendar().week:02d}" for item in observed_times}
+    return {item.date().isoformat() for item in observed_times}
+
+
+def _required_observation_periods(protocol: dict[str, Any]) -> int:
+    if protocol["lab"] == "etf_risk":
+        return max(1, int(protocol["minimum_duration_days"]) // 7)
+    return int(protocol["minimum_duration_days"])
