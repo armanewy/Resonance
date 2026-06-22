@@ -76,7 +76,7 @@ class EbayHttpProbeClient:
     ``EbayApiProbe``. It never returns raw payload text or tokens.
     """
 
-    sandbox: bool = True
+    sandbox: bool = False
     token_env: str | None = None
     marketplace_id: str = "EBAY_US"
     timeout_seconds: float = 30.0
@@ -89,6 +89,8 @@ class EbayHttpProbeClient:
         return self._rest_get(request_name, token=token, path=path, params=params)
 
     def _token(self) -> str:
+        if not self.sandbox and not self.token_env:
+            raise EbayHttpClientError("Production probing requires an explicit token environment variable name")
         env_name = self.token_env or ("EBAY_SANDBOX_ACCESS_TOKEN" if self.sandbox else "EBAY_ACCESS_TOKEN")
         token = os.environ.get(env_name)
         if not token:

@@ -42,6 +42,7 @@ class EbayApiHttpClientTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         os.environ.pop("EBAY_SANDBOX_ACCESS_TOKEN", None)
+        os.environ.pop("EBAY_PRODUCTION_USER_TOKEN", None)
 
     def test_trading_xml_response_is_redacted_and_token_not_returned(self) -> None:
         xml = (FIXTURES / "get_best_offers_response.xml").read_bytes()
@@ -109,6 +110,24 @@ class EbayApiHttpClientTests(unittest.TestCase):
         os.environ.pop("EBAY_SANDBOX_ACCESS_TOKEN", None)
         with self.assertRaisesRegex(EbayHttpClientError, "EBAY_SANDBOX_ACCESS_TOKEN"):
             EbayHttpProbeClient(sandbox=True).get("orders_read", "/sell/fulfillment/v1/order", {})
+
+    def test_production_token_env_must_be_explicit(self) -> None:
+        os.environ["EBAY_PRODUCTION_USER_TOKEN"] = "secret-production-token"
+        with self.assertRaisesRegex(EbayHttpClientError, "explicit token environment variable"):
+            EbayHttpProbeClient(sandbox=False).get("seller_owned_best_offers", "/ws/api.dll?callname=GetBestOffers", {"item_id": "123"})
+
+        xml = (FIXTURES / "get_best_offers_response.xml").read_bytes()
+        with patch("tools.ebay_api_probe.http_client.urlopen", return_value=_Response(200, xml, "text/xml")) as mocked:
+            summary = EbayHttpProbeClient(sandbox=False, token_env="EBAY_PRODUCTION_USER_TOKEN").get(
+                "seller_owned_best_offers",
+                "/ws/api.dll?callname=GetBestOffers",
+                {"item_id": "123"},
+            )
+
+        sent_request = mocked.call_args.args[0]
+        rendered = json.dumps(summary, sort_keys=True)
+        self.assertEqual(sent_request.full_url, "https://api.ebay.com/ws/api.dll")
+        self.assertNotIn("secret-production-token", rendered)
 
     def test_dynamic_identifier_object_keys_are_not_retained(self) -> None:
         payload = {

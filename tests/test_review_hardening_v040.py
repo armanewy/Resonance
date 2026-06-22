@@ -25,6 +25,7 @@ from behavior_lab.offerlab_research import (
     ResearchPermissionError,
 )
 from tools.ebay_api_probe import EbayApiProbe, StaticProbeClient
+from tools.ebay_api_probe.probe import ROLE_REQUESTS
 
 
 def _rows() -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]]]:
@@ -439,21 +440,18 @@ class ReviewHardeningV040Tests(unittest.TestCase):
         responses = {
             "seller_owned_best_offers": {"status": 200},
             "buyer_participated_best_offers": {"status": 200},
-            "unrelated_best_offers_probe": {"status": 200, "bestOffers": [{"price": {"value": "70"}}]},
-            "inventory_read": {"status": 200},
-            "orders_read": {"status": 200},
-            "finances_read": {"status": 200},
-            "traffic_read": {"status": 200},
+            ROLE_REQUESTS["unrelated_public_ended"]: {"status": 200, "bestOffers": [{"price": {"value": "70"}}]},
         }
         report = EbayApiProbe(StaticProbeClient(responses)).run(
             scopes=["https://api.ebay.com/oauth/api_scope"],
             seller_owned_listing_id="a",
             buyer_participated_listing_id="b",
             unrelated_listing_id="c",
+            authorized_production_user_token=True,
         )
         self.assertEqual(report["unrelated_visibility_observation"], "accessible")
         self.assertEqual(
-            report["permission_matrix"]["unrelated_best_offers_probe"]["observed_result"],
+            report["permission_matrix"][ROLE_REQUESTS["unrelated_public_ended"]]["observed_result"],
             "accessible",
         )
 

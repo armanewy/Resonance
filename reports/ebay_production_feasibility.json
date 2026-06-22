@@ -1,11 +1,13 @@
 {
-  "schema_version": "ebay_production_feasibility.v1",
-  "status": "blocked",
+  "schema_version": "ebay_authorized_read_only_probe.v2",
+  "status": "not_run",
   "blocked_reason": "missing_authorized_production_token_and_manual_listing_ids",
   "executed": false,
   "raw_payloads_retained": false,
   "tokens_available": false,
   "listing_ids_available": false,
-  "conclusion": "C. Result is technically indeterminate.",
-  "next_allowed_step": "Run the read-only CLI with an authorized test account and manually supplied listing IDs."
+  "crawling_or_listing_discovery_allowed": false,
+  "feasibility": "indeterminate",
+  "seller_export_pilot_blocked": false,
+  "next_allowed_step": "Run the production-only read-only CLI with an operator-owned token environment variable and manually supplied listing IDs."
 }
