@@ -219,6 +219,32 @@ contracts:
             store_text = (tmp / "state" / "audit-money-lab" / "autopilot.jsonl").read_text(encoding="utf-8")
             self.assertNotIn("AUDIT_SECRET_TOKEN", store_text)
 
+    def test_auth_query_credentials_are_not_persisted_to_store(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
+            secret = "SUPER_SECRET_CREDENTIAL_123"
+            path = _write_portfolio(
+                tmp,
+                contracts=[
+                    {
+                        "contract_id": "secret-auth",
+                        "lab": "weather_edge",
+                        "paper_capital_limit": 20.0,
+                        "alert_threshold": 0.0,
+                        "source_config": {
+                            "provider": "fixture",
+                            "connector": f"fixture_feed?auth={secret}",
+                            "source_id": f"weather_feed?auth={secret}",
+                        },
+                    }
+                ],
+            )
+            autopilot = MoneyAutopilot.from_path(path)
+            autopilot.run_once()
+
+            store_text = (tmp / "state" / "audit-money-lab" / "autopilot.jsonl").read_text(encoding="utf-8")
+            self.assertNotIn(secret, store_text)
+
     def test_weekly_report_realized_value_excludes_unresolved_expected_value(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_name:
             autopilot = MoneyAutopilot.from_path(_write_portfolio(Path(tmp_name)))

@@ -82,11 +82,17 @@ CONNECTOR_DANGER_MARKERS = (
 SECRET_KEY_MARKERS = (
     "api_key",
     "apikey",
+    "auth",
     "authorization",
     "credential",
+    "credentials",
+    "key",
     "map_key",
     "password",
     "secret",
+    "session",
+    "sig",
+    "signature",
     "token",
 )
 SECRET_VALUE_MARKERS = ("audit_secret_token",)
@@ -1018,8 +1024,12 @@ def _redact_secrets(value: Any) -> Any:
     lowered = value.lower()
     if any(marker in lowered for marker in SECRET_VALUE_MARKERS):
         return "[REDACTED]"
-    if re.search(r"(?i)(bearer|token|api[_-]?key|secret|password)=", value):
-        return re.sub(r"(?i)((?:[?&]|^)(?:api[_-]?key|token|access[_-]?token|secret|password|key)=)[^&\s]+", r"\1[REDACTED]", value)
+    if re.search(r"(?i)(auth|authorization|bearer|credential|key|password|secret|session|sig|signature|token)=", value):
+        return re.sub(
+            r"(?i)((?:[?&]|^)(?:api[_-]?key|auth|authorization|credential|credentials|key|map[_-]?key|password|secret|session|sig|signature|token|access[_-]?token)=)[^&\s]+",
+            r"\1[REDACTED]",
+            value,
+        )
     return value
 
 
