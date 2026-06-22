@@ -57,6 +57,10 @@ FORBIDDEN_MODEL_FIELDS = {
     "accepted_price",
     "outcome",
     "label",
+    "future_status",
+    "future_turn_count",
+    "terminal_thread_state",
+    "artifact_name",
 }
 
 CATEGORICAL_FEATURES = ["category", "condition", "current_actor", "current_action"]
