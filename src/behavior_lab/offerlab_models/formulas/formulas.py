@@ -89,6 +89,7 @@ class FormulaHiddenLockbox:
         )
         predictions = model.predict(self._hidden_rows)
         return {
+            "submitted": True,
             "formula_id": model.model_id,
             **reservation,
             "hidden_rows": len(self._hidden_rows),
@@ -216,6 +217,7 @@ def evaluate_formula_candidates(
                 store_path=hidden_lockbox_store_path,
                 target="seller_next_action_formula",
             ).submit_once(chosen_model)
+    hidden_submitted = bool(hidden_report and hidden_report.get("submitted"))
     return {
         "evidence_role": EVIDENCE_ROLE,
         "research_only": True,
@@ -229,10 +231,14 @@ def evaluate_formula_candidates(
         "chosen_formula_id": chosen_id,
         "hidden_lockbox": hidden_report,
         "black_box_comparison": {
-            "compared": black_box_model_id is not None and black_box_hidden_loss is not None,
+            "compared": hidden_submitted and black_box_model_id is not None and black_box_hidden_loss is not None,
             "black_box_model_id": black_box_model_id,
             "black_box_hidden_loss": black_box_hidden_loss,
-            "claim": "formula candidates are retained only when chronological or hidden metrics justify the added complexity",
+            "claim": (
+                "formula hidden metrics are compared only after a formula hidden-lockbox submission"
+                if hidden_submitted
+                else "formula candidates are retained only on chronological development falsification in this report"
+            ),
         },
     }
 

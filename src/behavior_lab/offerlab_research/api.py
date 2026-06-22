@@ -248,6 +248,9 @@ class OfferLabResearchAPI:
         self._hidden_rows_hash = _rows_hash(self._hidden_rows)
         self._hidden_case_tokens = _case_tokens(self._hidden_rows)
         self._hidden_case_set_hash = stable_hash(self._hidden_case_tokens)
+        self._legacy_hidden_case_set_hash = stable_hash(
+            sorted(_content_case_token(row) for row in self._hidden_rows)
+        )
         self._campaign_fingerprint = stable_hash(
             {
                 "training_rows_hash": self._training_rows_hash,
@@ -489,7 +492,10 @@ class OfferLabResearchAPI:
                     or result.get("hidden_case_set_hash")
                     or result.get("canonical_lockbox_id")
                 )
-                if previous_case_set == self._hidden_case_set_hash:
+                if previous_case_set in {
+                    self._hidden_case_set_hash,
+                    self._legacy_hidden_case_set_hash,
+                }:
                     raise ResearchBudgetError(
                         "hidden case set was already reserved"
                     )
@@ -844,7 +850,7 @@ def _public_training_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _case_token(row: dict[str, Any]) -> str:
+def _content_case_token(row: dict[str, Any]) -> str:
     # Case identity intentionally ignores mutable display/participant IDs and
     # the hidden label. Renaming metadata or relabeling the same feature/time
     # case therefore cannot manufacture a fresh lockbox.
@@ -857,8 +863,31 @@ def _case_token(row: dict[str, Any]) -> str:
     return stable_hash(identity)
 
 
+def _source_case_token(row: dict[str, Any]) -> str | None:
+    source_identity = {
+        "task": row.get("task"),
+        "row_id": row.get("row_id"),
+        "thread_id": row.get("thread_id"),
+        "listing_id": row.get("listing_id"),
+        "source_row_id": row.get("source_row_id"),
+    }
+    if not any(value not in {None, ""} for value in source_identity.values()):
+        return None
+    return stable_hash(source_identity)
+
+
+def _case_token(row: dict[str, Any]) -> str:
+    return _content_case_token(row)
+
+
 def _case_tokens(rows: list[dict[str, Any]]) -> list[str]:
-    return sorted(_case_token(row) for row in rows)
+    tokens: set[str] = set()
+    for row in rows:
+        tokens.add(_content_case_token(row))
+        source_token = _source_case_token(row)
+        if source_token is not None:
+            tokens.add(source_token)
+    return sorted(tokens)
 
 
 def _rows_hash(rows: list[dict[str, Any]]) -> str:

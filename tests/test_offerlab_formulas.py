@@ -43,7 +43,8 @@ class OfferLabFormulaTests(unittest.TestCase):
         self.assertEqual(report["scope"]["evidence_scope"], "bounded_smoke_or_semantics")
         self.assertTrue(report["falsification_enforced"])
         self.assertFalse(report["hidden_lockbox"]["submitted"])
-        self.assertTrue(report["black_box_comparison"]["compared"])
+        self.assertFalse(report["black_box_comparison"]["compared"])
+        self.assertIn("chronological development falsification", report["black_box_comparison"]["claim"])
 
         with tempfile.TemporaryDirectory() as tmp:
             store = Path(tmp) / "formula-hidden.jsonl"
@@ -57,6 +58,7 @@ class OfferLabFormulaTests(unittest.TestCase):
                 hidden_lockbox_store_path=store,
             )
             self.assertEqual(submitted["hidden_lockbox"]["hidden_submission_count"], 1)
+            self.assertTrue(submitted["black_box_comparison"]["compared"])
             with self.assertRaises(RuntimeError):
                 evaluate_formula_candidates(
                     split.train,

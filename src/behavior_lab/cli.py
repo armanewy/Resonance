@@ -55,6 +55,7 @@ from behavior_lab.offerlab import (
     load_offerlab_snapshots,
 )
 from behavior_lab.offerlab_models import run_sample_research_suite
+from behavior_lab.offerlab_models.benchmark_v1 import BenchmarkPaths, run_offerlab_benchmark_v1
 from behavior_lab.research_api import ResearchAPI
 from behavior_lab.runner import BatchConfig, SyntheticBatchRunner
 from behavior_lab.stress import LabStressTester
@@ -264,6 +265,23 @@ def command_offerlab_recommend(args: argparse.Namespace) -> None:
 
 def command_offerlab_models_sample(args: argparse.Namespace) -> None:
     _print_json(run_sample_research_suite())
+
+
+def command_offerlab_models_benchmark_v1(args: argparse.Namespace) -> None:
+    _print_json(
+        run_offerlab_benchmark_v1(
+            BenchmarkPaths(
+                normalized_dir=Path(args.normalized_dir),
+                output_path=Path(args.output),
+                doc_path=Path(args.doc),
+                model_cards_dir=Path(args.model_cards_dir),
+                protocol_path=Path(args.protocol),
+                lockbox_store_path=Path(args.lockbox_store) if args.lockbox_store else None,
+            ),
+            row_cap=args.row_cap,
+            seed=args.seed,
+        )
+    )
 
 
 def command_data_source_list(args: argparse.Namespace) -> None:
@@ -654,6 +672,16 @@ def build_parser() -> argparse.ArgumentParser:
     offer_models_subparsers = offer_models.add_subparsers(dest="offerlab_models_command", required=True)
     offer_models_sample = offer_models_subparsers.add_parser("sample", help="Run the deterministic NBER-format sample model suite")
     offer_models_sample.set_defaults(func=command_offerlab_models_sample)
+    offer_models_benchmark = offer_models_subparsers.add_parser("benchmark-v1", help="Run scoped OfferLab Benchmark v1 integration")
+    offer_models_benchmark.add_argument("--normalized-dir", required=True)
+    offer_models_benchmark.add_argument("--output", default="reports/offerlab_benchmark_v1.json")
+    offer_models_benchmark.add_argument("--doc", default="docs/runs/OFFERLAB_BENCHMARK_V1_RESULTS.md")
+    offer_models_benchmark.add_argument("--model-cards-dir", default="docs/model_cards/offerlab_benchmark_v1")
+    offer_models_benchmark.add_argument("--protocol", default="datasets/manifests/offerlab_benchmark_v1.yaml")
+    offer_models_benchmark.add_argument("--lockbox-store", required=True, help="External durable JSONL event store for one-shot hidden submissions")
+    offer_models_benchmark.add_argument("--row-cap", type=_positive, default=500)
+    offer_models_benchmark.add_argument("--seed", type=int, default=20240621)
+    offer_models_benchmark.set_defaults(func=command_offerlab_models_benchmark_v1)
 
     demo = subparsers.add_parser("demo", help="Run all waves end-to-end with campaign-safe lockboxes")
     demo.add_argument("--data-dir", default=".demo")

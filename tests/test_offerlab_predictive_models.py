@@ -48,6 +48,9 @@ class OfferLabPredictiveModelTests(unittest.TestCase):
         self.assertTrue(report["negative_controls"]["random_row_split"]["executed"])
         self.assertTrue(report["negative_controls"]["same_timestamp_ordering"]["executed"])
         self.assertTrue(report["negative_controls"]["artifact_name_canary"]["rejected"])
+        for control in report["negative_controls"].values():
+            self.assertTrue(control["passed"])
+            self.assertIn("threshold", control)
         self.assertFalse(report["production_export_allowed"])
         self.assertFalse(report["participant_id_features_used"])
         for board in report["leaderboards"].values():
@@ -77,6 +80,28 @@ class OfferLabPredictiveModelTests(unittest.TestCase):
         self.assertLessEqual(prediction["lower"], prediction["prediction"])
         self.assertGreaterEqual(prediction["upper"], prediction["prediction"])
 
+    def test_regression_hidden_selection_rationale_does_not_claim_calibration_tiebreaker(self) -> None:
+        rows = [
+            _final_price_row("r1", "2020-01-01T00:00:00", "cameras", 0.70),
+            _final_price_row("r2", "2020-01-02T00:00:00", "cameras", 0.75),
+            _final_price_row("r3", "2020-01-03T00:00:00", "cameras", 0.80),
+            _final_price_row("r4", "2020-01-04T00:00:00", "parts", 0.85),
+            _final_price_row("r5", "2020-01-05T00:00:00", "parts", 0.90),
+        ]
+        split = chronological_split(rows, time_key="timestamp")
+        with tempfile.TemporaryDirectory() as tmp:
+            report = predictive_suite(
+                "final_price_ratio",
+                split.train,
+                split.development,
+                split.hidden,
+                hidden_lockbox_id="regression-selection-test",
+                hidden_lockbox_store_path=Path(tmp) / "hidden.jsonl",
+            )
+        rationale = report["hidden_lockbox"]["selection_rationale"]
+        self.assertNotIn("better_calibration", rationale["tie_breakers"])
+        self.assertIn("higher_support_coverage", rationale["tie_breakers"])
+
     def test_hidden_predictive_evaluation_is_explicit_and_one_shot(self) -> None:
         rows = _tasks()["seller_next_action"]
         split = chronological_split(rows, time_key="timestamp")
@@ -91,7 +116,15 @@ class OfferLabPredictiveModelTests(unittest.TestCase):
                 hidden_lockbox_store_path=store,
             )
             self.assertTrue(report["hidden_lockbox"]["submitted"])
-            self.assertEqual(len(report["leaderboards"]["hidden"]), 1)
+            self.assertGreaterEqual(len(report["leaderboards"]["hidden"]), 1)
+            baseline_model_id = report["hidden_lockbox"]["baseline_model_id"]
+            hidden_models = {row["model_id"] for row in report["leaderboards"]["hidden"]}
+            self.assertIn(baseline_model_id, hidden_models)
+            self.assertTrue(report["hidden_lockbox"]["baseline_hidden_scoring_preregistered"])
+            self.assertIn("selection_rationale", report["hidden_lockbox"])
+            self.assertIn("evaluation_bundle_model_ids", report["hidden_lockbox"])
+            for row in report["leaderboards"]["hidden"]:
+                self.assertIn("relative_improvement", row)
             self.assertTrue(store.exists())
             with self.assertRaises(RuntimeError):
                 predictive_suite(

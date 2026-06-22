@@ -278,8 +278,9 @@ def reserve_hidden_submission(
         raise ValueError("artifact_id is required")
     from behavior_lab.offerlab_research.api import AppendOnlyResearchStore, ResearchBudgetError
 
-    tokens = sorted({_hidden_case_token(row) for row in hidden_rows})
+    tokens = _hidden_case_tokens(hidden_rows)
     case_set_hash = stable_hash(tokens)
+    legacy_case_set_hash = stable_hash(sorted({_hidden_content_case_token(row) for row in hidden_rows}))
     event_type = "offerlab_hidden_submission_reserved"
     store = AppendOnlyResearchStore(store_path)
     requested_tokens = set(tokens)
@@ -309,7 +310,7 @@ def reserve_hidden_submission(
                 or result.get("hidden_case_set_hash")
                 or result.get("canonical_lockbox_id")
             )
-            if previous_case_set == case_set_hash:
+            if previous_case_set in {case_set_hash, legacy_case_set_hash}:
                 raise ResearchBudgetError("hidden case set was already reserved")
             previous_tokens = set(payload.get("hidden_case_tokens", []) or result.get("hidden_case_tokens", []))
             if requested_tokens & previous_tokens:
@@ -360,7 +361,17 @@ def _to_float(value: Any) -> float:
         return 0.0
 
 
-def _hidden_case_token(row: dict[str, Any]) -> str:
+def _hidden_case_tokens(rows: list[dict[str, Any]]) -> list[str]:
+    tokens: set[str] = set()
+    for row in rows:
+        tokens.add(_hidden_content_case_token(row))
+        source_token = _hidden_source_case_token(row)
+        if source_token is not None:
+            tokens.add(source_token)
+    return sorted(tokens)
+
+
+def _hidden_content_case_token(row: dict[str, Any]) -> str:
     return stable_hash(
         {
             "task": row.get("task"),
@@ -369,3 +380,16 @@ def _hidden_case_token(row: dict[str, Any]) -> str:
             "observed_history": row.get("observed_history", []),
         }
     )
+
+
+def _hidden_source_case_token(row: dict[str, Any]) -> str | None:
+    source_identity = {
+        "task": row.get("task"),
+        "row_id": row.get("row_id"),
+        "thread_id": row.get("thread_id"),
+        "listing_id": row.get("listing_id"),
+        "source_row_id": row.get("source_row_id"),
+    }
+    if not any(value not in {None, ""} for value in source_identity.values()):
+        return None
+    return stable_hash(source_identity)

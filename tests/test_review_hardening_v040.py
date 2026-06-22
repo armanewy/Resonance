@@ -270,6 +270,35 @@ class ReviewHardeningV040Tests(unittest.TestCase):
             with self.assertRaises(ResearchBudgetError):
                 second.submit_hidden_once("p1", lockbox_id="metadata-reset")
 
+    def test_hidden_source_identity_blocks_feature_extraction_replay(self) -> None:
+        _train, _development, hidden = _rows()
+        changed_hidden = []
+        for row in hidden:
+            item = dict(row)
+            item["features"] = dict(item["features"])  # type: ignore[index]
+            item["features"]["current_amount"] = float(item["features"]["current_amount"]) + 1.0  # type: ignore[index]
+            item["features"]["offer_to_asking_ratio"] = float(item["features"]["current_amount"]) / 100.0  # type: ignore[index]
+            changed_hidden.append(item)
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "research.jsonl"
+            reserve_hidden_submission(
+                store_path=store_path,
+                namespace="predictive_suite",
+                requested_lockbox_id="first",
+                target="seller_next_action",
+                hidden_rows=hidden,
+                artifact_id="artifact-a",
+            )
+            with self.assertRaises(ResearchBudgetError):
+                reserve_hidden_submission(
+                    store_path=store_path,
+                    namespace="predictive_suite",
+                    requested_lockbox_id="second",
+                    target="seller_next_action",
+                    hidden_rows=changed_hidden,
+                    artifact_id="artifact-b",
+                )
+
     def test_hidden_submission_rejects_post_development_proposal_mutation(self) -> None:
         train, development, hidden = _rows()
         api = OfferLabResearchAPI(

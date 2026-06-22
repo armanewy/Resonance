@@ -29,6 +29,9 @@ from behavior_lab.offerlab_models.common import (
 )
 
 
+SELECTION_TOLERANCE_FRACTION = 0.01
+
+
 @dataclass
 class PredictionResult:
     model_id: str
@@ -370,24 +373,45 @@ def _classification_suite(
     if hidden_lockbox_id is not None and hidden and boards["development"]:
         if hidden_lockbox_store_path is None:
             raise ValueError("hidden_lockbox_store_path is required for hidden evaluation")
-        selected_model_id = boards["development"][0]["model_id"]
-        selected_row = boards["development"][0]
+        selected_row, selection_rationale = _select_development_row(boards["development"], metric="log_loss", classification=True)
+        selected_model_id = selected_row["model_id"]
+        baseline_model_id = _best_baseline_model_id(
+            boards["development"],
+            metric="log_loss",
+            candidates=["majority", "category_majority", "offer_ratio_threshold"],
+        )
+        baseline_row = next(row for row in boards["development"] if row.get("model_id") == baseline_model_id)
         selected_model = _find_model(models, selected_model_id)
+        baseline_model = _find_model(models, baseline_model_id)
         reservation = reserve_hidden_submission(
             store_path=hidden_lockbox_store_path,
             namespace="predictive_suite",
             requested_lockbox_id=f"{hidden_lockbox_id}:{task_name}",
             target=task_name,
             hidden_rows=hidden,
-            artifact_id=_prediction_artifact_id(selected_row, selected_model, suite="classification_v1"),
+            artifact_id=_prediction_bundle_artifact_id(
+                selected_row,
+                selected_model,
+                baseline_row,
+                baseline_model,
+                suite="classification_v1",
+            ),
         )
-        boards["hidden"].append(_classification_score(selected_model, train, hidden, "hidden", labels, train_profile, task_name))
-        _annotate_relative_improvement(boards["hidden"], metric="log_loss", baseline_model_id=selected_model_id)
+        boards["hidden"].append(_classification_score(baseline_model, train, hidden, "hidden", labels, train_profile, task_name))
+        if selected_model_id != baseline_model_id:
+            boards["hidden"].append(_classification_score(selected_model, train, hidden, "hidden", labels, train_profile, task_name))
+        _annotate_relative_improvement(boards["hidden"], metric="log_loss", baseline_model_id=baseline_model_id)
+        boards["hidden"].sort(key=lambda item: (item["log_loss"], item["complexity"]))
         hidden_lockbox = {
             "submitted": True,
             "hidden_submission_count": 1,
             "hidden_rows": len(hidden),
             "selected_model_id": selected_model_id,
+            "baseline_model_id": baseline_model_id,
+            "evaluation_bundle_model_ids": sorted({baseline_model_id, selected_model_id}),
+            "evaluation_bundle_model_count": len({baseline_model_id, selected_model_id}),
+            "baseline_hidden_scoring_preregistered": True,
+            "selection_rationale": selection_rationale,
             **reservation,
         }
     return {
@@ -436,24 +460,45 @@ def _regression_suite(
     if hidden_lockbox_id is not None and hidden and boards["development"]:
         if hidden_lockbox_store_path is None:
             raise ValueError("hidden_lockbox_store_path is required for hidden evaluation")
-        selected_model_id = boards["development"][0]["model_id"]
-        selected_row = boards["development"][0]
+        selected_row, selection_rationale = _select_development_row(boards["development"], metric="rmse", classification=False)
+        selected_model_id = selected_row["model_id"]
+        baseline_model_id = _best_baseline_model_id(
+            boards["development"],
+            metric="rmse",
+            candidates=["median_regressor"],
+        )
+        baseline_row = next(row for row in boards["development"] if row.get("model_id") == baseline_model_id)
         selected_model = _find_model(models, selected_model_id)
+        baseline_model = _find_model(models, baseline_model_id)
         reservation = reserve_hidden_submission(
             store_path=hidden_lockbox_store_path,
             namespace="predictive_suite",
             requested_lockbox_id=f"{hidden_lockbox_id}:{task_name}",
             target=task_name,
             hidden_rows=hidden,
-            artifact_id=_prediction_artifact_id(selected_row, selected_model, suite="regression_v1"),
+            artifact_id=_prediction_bundle_artifact_id(
+                selected_row,
+                selected_model,
+                baseline_row,
+                baseline_model,
+                suite="regression_v1",
+            ),
         )
-        boards["hidden"].append(_regression_score(selected_model, train, hidden, "hidden", train_profile, task_name))
-        _annotate_relative_improvement(boards["hidden"], metric="rmse", baseline_model_id=selected_model_id)
+        boards["hidden"].append(_regression_score(baseline_model, train, hidden, "hidden", train_profile, task_name))
+        if selected_model_id != baseline_model_id:
+            boards["hidden"].append(_regression_score(selected_model, train, hidden, "hidden", train_profile, task_name))
+        _annotate_relative_improvement(boards["hidden"], metric="rmse", baseline_model_id=baseline_model_id)
+        boards["hidden"].sort(key=lambda item: (item["rmse"], item["complexity"]))
         hidden_lockbox = {
             "submitted": True,
             "hidden_submission_count": 1,
             "hidden_rows": len(hidden),
             "selected_model_id": selected_model_id,
+            "baseline_model_id": baseline_model_id,
+            "evaluation_bundle_model_ids": sorted({baseline_model_id, selected_model_id}),
+            "evaluation_bundle_model_count": len({baseline_model_id, selected_model_id}),
+            "baseline_hidden_scoring_preregistered": True,
+            "selection_rationale": selection_rationale,
             **reservation,
         }
     return {
@@ -559,6 +604,66 @@ def _find_model(models: list[Any], model_id: str) -> Any:
     raise KeyError(f"model {model_id!r} not found")
 
 
+def _best_baseline_model_id(rows: list[dict[str, Any]], *, metric: str, candidates: list[str]) -> str:
+    baseline_rows = [
+        row for row in rows
+        if row.get("model_id") in candidates and row.get(metric) is not None
+    ]
+    if not baseline_rows:
+        return candidates[0]
+    return min(baseline_rows, key=lambda item: (float(item[metric]), int(item.get("complexity") or 0)))["model_id"]
+
+
+def _select_development_row(rows: list[dict[str, Any]], *, metric: str, classification: bool) -> tuple[dict[str, Any], dict[str, Any]]:
+    best_row = min(rows, key=lambda item: (float(item[metric]), int(item.get("complexity") or 0), str(item.get("model_id"))))
+    best_metric = float(best_row[metric])
+    tolerance = max(abs(best_metric) * SELECTION_TOLERANCE_FRACTION, 1e-12)
+    eligible = [
+        row for row in rows
+        if float(row.get(metric) or 0.0) <= best_metric + tolerance
+    ]
+    selected = min(
+        eligible,
+        key=lambda item: (
+            int(item.get("complexity") or 0),
+            _calibration_error(item) if classification else 0.0,
+            -float(item.get("coverage") or 0.0),
+            float(item.get(metric) or 0.0),
+            str(item.get("model_id")),
+        ),
+    )
+    tie_breakers = ["simpler_model"]
+    if classification:
+        tie_breakers.append("better_calibration")
+    tie_breakers.extend(["higher_support_coverage", "lower_development_loss"])
+    return selected, {
+        "selection_split": "development",
+        "metric": metric,
+        "best_metric": best_metric,
+        "tolerance_fraction": SELECTION_TOLERANCE_FRACTION,
+        "tolerance_absolute": tolerance,
+        "eligible_model_ids": [str(row.get("model_id")) for row in eligible],
+        "tie_breakers": tie_breakers,
+        "selected_model_id": selected.get("model_id"),
+        "selected_metric": selected.get(metric),
+        "selected_complexity": selected.get("complexity"),
+        "selected_coverage": selected.get("coverage"),
+    }
+
+
+def _calibration_error(row: dict[str, Any]) -> float:
+    bins = row.get("calibration", [])
+    total = sum(int(item.get("count") or 0) for item in bins if isinstance(item, dict))
+    if not total:
+        return 1.0
+    weighted = 0.0
+    for item in bins:
+        if not isinstance(item, dict):
+            continue
+        weighted += int(item.get("count") or 0) * abs(float(item.get("mean_prediction") or 0.0) - float(item.get("empirical_rate") or 0.0))
+    return weighted / total
+
+
 def _prediction_artifact_id(row: dict[str, Any], model: Any, *, suite: str) -> str:
     return stable_hash(
         {
@@ -569,6 +674,27 @@ def _prediction_artifact_id(row: dict[str, Any], model: Any, *, suite: str) -> s
             "complexity": row.get("complexity"),
             "lineage": row.get("lineage", {}),
             "model_state_hash": stable_hash(_model_state_payload(model)),
+            "software_version": __version__,
+        }
+    )
+
+
+def _prediction_bundle_artifact_id(
+    selected_row: dict[str, Any],
+    selected_model: Any,
+    baseline_row: dict[str, Any],
+    baseline_model: Any,
+    *,
+    suite: str,
+) -> str:
+    return stable_hash(
+        {
+            "suite": f"{suite}_hidden_evaluation_bundle",
+            "selected_artifact_id": _prediction_artifact_id(selected_row, selected_model, suite=suite),
+            "baseline_artifact_id": _prediction_artifact_id(baseline_row, baseline_model, suite=suite),
+            "selected_model_id": selected_row.get("model_id"),
+            "baseline_model_id": baseline_row.get("model_id"),
+            "bundle_policy": "score preregistered strong baseline and selected model once on the same hidden case set",
             "software_version": __version__,
         }
     )
@@ -625,6 +751,8 @@ def _classification_negative_controls(
             "executed": True,
             "rows": len(permuted),
             "baseline_log_loss": multiclass_log_loss(permuted_predictions, labels=labels) if permuted else None,
+            "threshold": "permuted-label diagnostic must execute on at least one development row",
+            "passed": bool(permuted),
             "label_hash": stable_hash([row.get("label") for row in permuted]),
         },
         "random_row_split": _random_row_split_control(train + development),
@@ -646,6 +774,8 @@ def _regression_negative_controls(
             "executed": True,
             "rows": len(permuted),
             "baseline_rmse": regression_rmse(permuted_predictions) if permuted else None,
+            "threshold": "permuted-label diagnostic must execute on at least one development row",
+            "passed": bool(permuted),
             "label_hash": stable_hash([row.get("label") for row in permuted]),
         },
         "random_row_split": _random_row_split_control(train + development),
@@ -677,6 +807,8 @@ def _random_row_split_control(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "executed": True,
         "train_rows": len(train_rows),
         "evaluation_rows": len(eval_rows),
+        "threshold": "deterministic random split must produce nonempty train and evaluation partitions",
+        "passed": bool(train_rows and eval_rows),
         "row_hash": stable_hash([row.get("row_id") for row in train_rows + eval_rows]),
     }
 
@@ -688,6 +820,8 @@ def _same_timestamp_control(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "executed": True,
         "tied_timestamp_count": len(tied),
         "tied_row_count": sum(tied.values()),
+        "threshold": "timestamp-stable ordering diagnostic must produce a reproducible ordering hash",
+        "passed": True,
         "ordering_hash": stable_hash(
             [
                 {"timestamp": row.get("timestamp"), "row_id": row.get("row_id")}
@@ -701,6 +835,10 @@ def _artifact_name_canary_control() -> dict[str, Any]:
     return {
         "executed": True,
         "rejected": not validate_feature_contract(
+            [{"row_id": "artifact-name-canary", "features": {"artifact_name": "hidden_winner"}}]
+        ),
+        "threshold": "artifact-name canary must be rejected by the feature contract",
+        "passed": not validate_feature_contract(
             [{"row_id": "artifact-name-canary", "features": {"artifact_name": "hidden_winner"}}]
         ),
     }
