@@ -478,6 +478,27 @@ def command_money_wave2_integration_report(args: argparse.Namespace) -> None:
     )
 
 
+def command_money_autopilot(args: argparse.Namespace) -> None:
+    from behavior_lab.money.autopilot import MoneyAutopilot
+
+    autopilot = MoneyAutopilot.from_path(args.portfolio)
+    command = getattr(args, "autopilot_command", None) or "run-once"
+    if command == "status":
+        _print_json(autopilot.status())
+    elif command == "run-once":
+        _print_json(autopilot.run_once())
+    elif command == "approvals":
+        _print_json(autopilot.approvals())
+    elif command == "weekly-report":
+        _print_json(autopilot.weekly_report(write_event=True))
+    elif command == "pause":
+        _print_json(autopilot.pause(args.contract_id))
+    elif command == "resume":
+        _print_json(autopilot.resume(args.contract_id))
+    else:
+        raise SystemExit(f"unsupported autopilot command: {command}")
+
+
 def _write_json_output(output: str | None, payload: dict[str, Any]) -> None:
     if output:
         path = Path(output)
@@ -789,6 +810,37 @@ def build_parser() -> argparse.ArgumentParser:
     money_wave2_report.add_argument("--workspace")
     money_wave2_report.add_argument("--generated-at", default="2026-07-04T00:00:00+00:00")
     money_wave2_report.set_defaults(func=command_money_wave2_integration_report)
+
+    money_autopilot = money_subparsers.add_parser("autopilot", help="Run the local paper-finance portfolio autopilot")
+    money_autopilot.add_argument("--portfolio", default="money-lab.yaml")
+    money_autopilot.set_defaults(func=command_money_autopilot)
+    money_autopilot_subparsers = money_autopilot.add_subparsers(dest="autopilot_command")
+
+    money_autopilot_status = money_autopilot_subparsers.add_parser("status", help="Show resumable autopilot status")
+    money_autopilot_status.add_argument("--portfolio", default="money-lab.yaml")
+    money_autopilot_status.set_defaults(func=command_money_autopilot)
+
+    money_autopilot_run_once = money_autopilot_subparsers.add_parser("run-once", help="Run one local paper autopilot cycle")
+    money_autopilot_run_once.add_argument("--portfolio", default="money-lab.yaml")
+    money_autopilot_run_once.set_defaults(func=command_money_autopilot)
+
+    money_autopilot_approvals = money_autopilot_subparsers.add_parser("approvals", help="List waiting approval items")
+    money_autopilot_approvals.add_argument("--portfolio", default="money-lab.yaml")
+    money_autopilot_approvals.set_defaults(func=command_money_autopilot)
+
+    money_autopilot_weekly = money_autopilot_subparsers.add_parser("weekly-report", help="Write and print a paper weekly report")
+    money_autopilot_weekly.add_argument("--portfolio", default="money-lab.yaml")
+    money_autopilot_weekly.set_defaults(func=command_money_autopilot)
+
+    money_autopilot_pause = money_autopilot_subparsers.add_parser("pause", help="Pause one contract")
+    money_autopilot_pause.add_argument("contract_id", metavar="CONTRACT_ID")
+    money_autopilot_pause.add_argument("--portfolio", default="money-lab.yaml")
+    money_autopilot_pause.set_defaults(func=command_money_autopilot)
+
+    money_autopilot_resume = money_autopilot_subparsers.add_parser("resume", help="Resume one contract")
+    money_autopilot_resume.add_argument("contract_id", metavar="CONTRACT_ID")
+    money_autopilot_resume.add_argument("--portfolio", default="money-lab.yaml")
+    money_autopilot_resume.set_defaults(func=command_money_autopilot)
 
     benchmark_parser = subparsers.add_parser("benchmark", help="Federated benchmark utilities")
     benchmark_subparsers = benchmark_parser.add_subparsers(dest="benchmark_command", required=True)
