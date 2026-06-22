@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
 import io
 import json
 from pathlib import Path
@@ -17,6 +18,7 @@ for path in [str(ROOT), str(TESTS)]:
 import _bootstrap  # noqa: E402,F401
 
 from behavior_lab.cli import main
+from behavior_lab.money.canary import MoneyCanaryManager
 from behavior_lab.money.operations import DEFAULT_RELEASE_COMMIT, MoneyOperations, MoneyOperationsError
 from test_offerlab_pilot_onboard import _write_many_complete_rows
 from behavior_lab.offerlab_pilot import onboard_input
@@ -125,6 +127,55 @@ class MoneyOperationsTests(unittest.TestCase):
             self.assertFalse(readiness["data_readiness"]["canary_start_allowed"])
             seller = started["manifest"]["canary_hashes"]["offerlab_seller_pilot"]
             self.assertEqual(seller.get("status"), "blocked")
+
+    def test_operations_rejects_forged_blank_cost_readiness_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            readiness = {
+                "schema_version": "offerlab_seller_pilot_onboarding.v1",
+                "data_readiness": {
+                    "readiness_gate": {"passed": True},
+                    "canary_start_allowed": True,
+                    "never_silently_impute_material_costs": True,
+                    "material_value_summary": {
+                        "cost_basis": {"unit_cost_amount": {"row_count": 30, "valid_count": 0, "blank_or_invalid_count": 30}},
+                        "fees": {"fee_amount": {"row_count": 30, "valid_count": 30, "blank_or_invalid_count": 0}},
+                        "shipping_costs": {"shipping_cost_amount": {"row_count": 30, "valid_count": 30, "blank_or_invalid_count": 0}},
+                        "orders": {"sale_price_amount": {"row_count": 30, "valid_count": 30, "blank_or_invalid_count": 0}},
+                    },
+                },
+                "mapping_approval": {"human_approval_required": False, "material_ambiguities": []},
+            }
+            readiness_path = Path(tmp) / "forged.json"
+            readiness_path.write_text(json.dumps(readiness), encoding="utf-8")
+
+            started = MoneyOperations(Path(tmp) / "ops").start(
+                as_of="2026-07-01T12:00:00+00:00",
+                release_commit=DEFAULT_RELEASE_COMMIT,
+                seller_readiness_report=readiness_path,
+            )
+
+            self.assertFalse(started["manifest"]["seller_readiness"]["passed"])
+            self.assertEqual(started["manifest"]["canary_hashes"]["offerlab_seller_pilot"].get("status"), "blocked")
+
+    def test_invalidated_canary_remains_behind_final_evidence_gate_after_duration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            operations = MoneyOperations(Path(tmp) / "ops")
+            started = operations.start(as_of="2026-07-01T00:00:00+00:00", release_commit=DEFAULT_RELEASE_COMMIT)
+            weather_id = started["manifest"]["canary_hashes"]["weather_edge"]["canary_id"]
+            manager = MoneyCanaryManager(Path(tmp) / "ops" / "canaries")
+            start = datetime(2026, 7, 1, tzinfo=timezone.utc)
+            for offset in range(1, 60):
+                manager.resume(weather_id, as_of=(start + timedelta(days=offset)).isoformat())
+
+            before_invalidation = manager.report(weather_id)
+            self.assertTrue(before_invalidation["final_evidence_report"]["available"])
+
+            manager.invalidate(weather_id, reason="test invalidation", as_of="2026-08-30T00:00:00+00:00")
+            report = manager.report(weather_id)
+
+            self.assertTrue(report["invalidated"])
+            self.assertTrue(report["metrics"]["minimum_duration_elapsed"])
+            self.assertFalse(report["final_evidence_report"]["available"])
 
     def test_cli_operations_start_status_recover_stop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -342,7 +342,7 @@ class MoneyOperations:
             bool(gate.get("passed"))
             and data_readiness.get("canary_start_allowed") is True
             and data_readiness.get("never_silently_impute_material_costs") is True
-            and bool(data_readiness.get("material_value_summary"))
+            and _material_summary_allows_seller_canary(data_readiness.get("material_value_summary"))
             and mapping_approval.get("human_approval_required") is not True
         )
         return {
@@ -352,6 +352,26 @@ class MoneyOperations:
             "canary_start_allowed": passed,
             "reason": "readiness_gate_passed" if passed else "readiness_gate_failed",
         }
+
+
+def _material_summary_allows_seller_canary(summary: Any) -> bool:
+    if not isinstance(summary, dict):
+        return False
+    required = {
+        ("cost_basis", "unit_cost_amount"),
+        ("fees", "fee_amount"),
+        ("shipping_costs", "shipping_cost_amount"),
+        ("orders", "sale_price_amount"),
+    }
+    for dataset, column in required:
+        column_summary = summary.get(dataset, {}).get(column, {})
+        if not isinstance(column_summary, dict):
+            return False
+        if int(column_summary.get("valid_count", 0) or 0) <= 0:
+            return False
+        if int(column_summary.get("blank_or_invalid_count", 0) or 0) != 0:
+            return False
+    return True
 
 
 def _release_manifest(*, root: Path, canaries: list[dict[str, Any]], release_commit: str, seller_readiness: dict[str, Any]) -> dict[str, Any]:
