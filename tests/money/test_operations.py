@@ -18,6 +18,8 @@ import _bootstrap  # noqa: E402,F401
 
 from behavior_lab.cli import main
 from behavior_lab.money.operations import DEFAULT_RELEASE_COMMIT, MoneyOperations, MoneyOperationsError
+from test_offerlab_pilot_onboard import _write_many_complete_rows
+from behavior_lab.offerlab_pilot import onboard_input
 
 
 class MoneyOperationsTests(unittest.TestCase):
@@ -104,6 +106,25 @@ class MoneyOperationsTests(unittest.TestCase):
             self.assertIn("canary_comparability", report)
             self.assertIn("seller_data_readiness", report)
             self.assertFalse(any(report["production_state"].values()))
+
+    def test_operations_does_not_start_seller_canary_from_blank_cost_readiness_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "seller_exports"
+            source.mkdir()
+            _write_many_complete_rows(source, rows=30, blank_cost_basis=True)
+            readiness_path = Path(tmp) / "readiness.json"
+            readiness = onboard_input(source, output_path=readiness_path)
+
+            operations = MoneyOperations(Path(tmp) / "ops")
+            started = operations.start(
+                as_of="2026-07-01T12:00:00+00:00",
+                release_commit=DEFAULT_RELEASE_COMMIT,
+                seller_readiness_report=readiness_path,
+            )
+
+            self.assertFalse(readiness["data_readiness"]["canary_start_allowed"])
+            seller = started["manifest"]["canary_hashes"]["offerlab_seller_pilot"]
+            self.assertEqual(seller.get("status"), "blocked")
 
     def test_cli_operations_start_status_recover_stop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

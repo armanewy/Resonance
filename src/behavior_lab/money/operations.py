@@ -335,8 +335,16 @@ class MoneyOperations:
             return {"passed": False, "reason": "no_seller_readiness_report", "canary_start_allowed": False}
         path = Path(report_path).resolve()
         payload = json.loads(path.read_text(encoding="utf-8"))
-        gate = payload.get("readiness_gate") or payload.get("data_readiness", {}).get("readiness_gate") or {}
-        passed = bool(gate.get("passed"))
+        data_readiness = payload.get("data_readiness", {})
+        mapping_approval = payload.get("mapping_approval", {})
+        gate = payload.get("readiness_gate") or data_readiness.get("readiness_gate") or {}
+        passed = (
+            bool(gate.get("passed"))
+            and data_readiness.get("canary_start_allowed") is True
+            and data_readiness.get("never_silently_impute_material_costs") is True
+            and bool(data_readiness.get("material_value_summary"))
+            and mapping_approval.get("human_approval_required") is not True
+        )
         return {
             "passed": passed,
             "report_hash": stable_hash(payload),

@@ -278,6 +278,17 @@ def onboard_input(input_dir: str | Path, *, output_path: str | Path | None = Non
         duplicates = _duplicate_targets(proposed)
         for target, sources in duplicates.items():
             material_ambiguities.append({"dataset": dataset, "column": target, "sources": sources, "reason": "ambiguous_column_mapping"})
+        material_values = _material_value_summary(dataset, rows, proposed)
+        for column, summary in material_values.items():
+            if summary["blank_or_invalid_count"] > 0:
+                material_ambiguities.append(
+                    {
+                        "dataset": dataset,
+                        "column": column,
+                        "reason": "blank_or_invalid_material_values",
+                        "blank_or_invalid_count": summary["blank_or_invalid_count"],
+                    }
+                )
         datasets[dataset] = {
             "present": True,
             "file_name": file_path.name,
@@ -287,6 +298,7 @@ def onboard_input(input_dir: str | Path, *, output_path: str | Path | None = Non
             "source_columns": source_columns,
             "proposed_column_mapping": proposed,
             "deterministic_validation": validation,
+            "material_values": material_values,
         }
     input_inside_repo = _path_is_inside_repo(source_dir)
     if input_inside_repo:
@@ -314,6 +326,7 @@ def onboard_input(input_dir: str | Path, *, output_path: str | Path | None = Non
         },
         "data_readiness": {
             "readiness_gate": readiness_gate,
+            "material_value_summary": _material_value_summary_by_dataset(datasets),
             "never_upload_seller_data": True,
             "never_silently_impute_material_costs": True,
             "canary_start_allowed": readiness_gate["passed"],
@@ -857,11 +870,49 @@ def _duplicate_targets(mapping: dict[str, str]) -> dict[str, list[str]]:
     return {target: sources for target, sources in targets.items() if len(sources) > 1}
 
 
+_MATERIAL_VALUE_COLUMNS = {
+    "orders": ("sale_price_amount",),
+    "fees": ("fee_amount",),
+    "shipping_costs": ("shipping_cost_amount",),
+    "cost_basis": ("unit_cost_amount",),
+    "returns_refunds": ("refund_amount",),
+}
+
+
+def _material_value_summary(dataset: str, rows: list[dict[str, Any]], mapping: dict[str, str]) -> dict[str, dict[str, int]]:
+    output = {}
+    for target in _MATERIAL_VALUE_COLUMNS.get(dataset, ()):
+        sources = [source for source, mapped_target in mapping.items() if mapped_target == target]
+        valid = 0
+        blank_or_invalid = 0
+        for row in rows:
+            values = [row.get(source) for source in sources if source in row]
+            value = next((item for item in values if item not in {None, ""}), None)
+            if _float_or_none(value) is None:
+                blank_or_invalid += 1
+            else:
+                valid += 1
+        output[target] = {
+            "row_count": len(rows),
+            "valid_count": valid,
+            "blank_or_invalid_count": blank_or_invalid,
+        }
+    return output
+
+
+def _material_value_summary_by_dataset(datasets: dict[str, Any]) -> dict[str, Any]:
+    return {
+        dataset: payload.get("material_values", {})
+        for dataset, payload in sorted(datasets.items())
+        if payload.get("present")
+    }
+
+
 def _onboarding_readiness_gate(datasets: dict[str, Any], ambiguities: list[dict[str, Any]]) -> dict[str, Any]:
     counts = {dataset: int(payload.get("rows", 0)) for dataset, payload in datasets.items() if payload.get("present")}
-    cost_rows = counts.get("cost_basis", 0)
-    fee_rows = counts.get("fees", 0)
-    shipping_rows = counts.get("shipping_costs", 0)
+    cost_rows = _valid_material_count(datasets, "cost_basis", "unit_cost_amount")
+    fee_rows = _valid_material_count(datasets, "fees", "fee_amount")
+    shipping_rows = _valid_material_count(datasets, "shipping_costs", "shipping_cost_amount")
     offer_rows = counts.get("offers", 0)
     order_rows = counts.get("orders", 0)
     mature_proxy = min(order_rows, fee_rows, shipping_rows, cost_rows)
@@ -879,6 +930,11 @@ def _onboarding_readiness_gate(datasets: dict[str, Any], ambiguities: list[dict[
     else:
         gate["checks"] = {**gate["checks"], "no_material_mapping_ambiguity": True}
     return gate
+
+
+def _valid_material_count(datasets: dict[str, Any], dataset: str, column: str) -> int:
+    values = datasets.get(dataset, {}).get("material_values", {})
+    return int(values.get(column, {}).get("valid_count", 0))
 
 
 def _validate_mapping(dataset: str, source_columns: list[str], mapping: dict[str, str]) -> dict[str, Any]:
