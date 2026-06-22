@@ -157,6 +157,55 @@ class ContractScoutTests(unittest.TestCase):
         self.assertEqual(result["accepted"], 0)
         self.assertIn("unbounded_loss", result["items"]["rejected"][0]["validation"]["reasons"])
 
+    def test_wrong_shaped_capital_requirement_is_rejected_not_crashed(self) -> None:
+        proposal = _proposal("wrong_shaped_capital")
+        proposal["capital_requirement"] = ["unbounded"]
+
+        result = _run_single(proposal)
+
+        self.assertEqual(result["accepted"], 0)
+        self.assertEqual(result["items"]["rejected"][0]["validation"]["status"], "rejected")
+        self.assertIn("unbounded_capital_requirement", result["items"]["rejected"][0]["validation"]["reasons"])
+
+    def test_wrong_shaped_max_loss_is_rejected_not_crashed(self) -> None:
+        proposal = _proposal("wrong_shaped_max_loss")
+        proposal["maximum_possible_loss"] = "unknown"
+
+        result = _run_single(proposal)
+
+        self.assertEqual(result["accepted"], 0)
+        self.assertEqual(result["items"]["rejected"][0]["validation"]["status"], "rejected")
+        self.assertIn("unbounded_loss", result["items"]["rejected"][0]["validation"]["reasons"])
+
+    def test_seller_listing_mutation_shape_cannot_become_eligible(self) -> None:
+        proposal = _proposal("seller_listing_mutation")
+        proposal["available_actions"].append(
+            {
+                "action_id": "revise_listing_price",
+                "action_type": "seller.update_listing",
+                "payload": {"listing_id": "seller-private-listing", "new_price": 19.99},
+            }
+        )
+
+        result = _run_single(proposal)
+
+        self.assertEqual(result["accepted"], 0)
+        self.assertEqual(result["items"]["rejected"][0]["validation"]["status"], "rejected")
+        self.assertIn("proposed_real_action", result["items"]["rejected"][0]["validation"]["reasons"])
+
+    def test_authority_extra_fields_are_rejected_not_silently_dropped(self) -> None:
+        proposal = _proposal("activation_request")
+        proposal["activation_status"] = "activated"
+        proposal["production_source_activation"] = True
+        proposal["money_allocation"] = {"amount": 50, "currency": "USD"}
+
+        result = _run_single(proposal)
+
+        self.assertEqual(result["accepted"], 0)
+        reasons = result["items"]["rejected"][0]["validation"]["reasons"]
+        self.assertIn("production_source_activation_requested", reasons)
+        self.assertIn("money_allocation_requested", reasons)
+
     def test_secret_like_credentials_are_not_persisted_to_state_or_reports(self) -> None:
         secret = "api_key=sk-live-audit-secret"
         proposal = _proposal("secret_credential")
@@ -383,6 +432,23 @@ class ContractScoutAgentRoleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             proposal = _proposal("agent_secret_attempt")
             proposal["credential_requirements"] = ["api_key=sk-live-audit-secret"]
+            response = ProviderResponse(
+                provider="mock",
+                model="static",
+                prompt_version="contract-scout-v1",
+                content={"contract_proposals": [proposal], "rejections": []},
+            )
+            context = MoneyAgentContext(campaign_id="contract-scout-test", prompt_version="contract-scout-v1")
+
+            with self.assertRaises(PermissionError):
+                FinancialResearchAgentRuntime(StaticMoneyAgentProvider(response), state_path=Path(tmp) / "agents.jsonl").run(CONTRACT_SCOUT, context)
+
+    def test_contract_scout_agent_role_rejects_authority_extra_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            proposal = _proposal("agent_authority_attempt")
+            proposal["activation_status"] = "activated"
+            proposal["production_source_activation"] = True
+            proposal["money_allocation"] = {"amount": 50, "currency": "USD"}
             response = ProviderResponse(
                 provider="mock",
                 model="static",

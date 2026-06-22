@@ -244,9 +244,23 @@ class FinancialContractScout(FinancialAgentRole):
                 raise MoneyAgentPermissionError("contract scout proposal contains secret-like credential material")
             if proposal_payload.get("activation_status") not in {None, "proposed", "research_only"}:
                 raise MoneyAgentPermissionError("contract scout may not activate a contract")
-            if proposal_payload.get("money_allocation") not in {None, False, 0, "none"}:
+            for field_name in (
+                "activate_contract",
+                "activate_source",
+                "capital_allocation",
+                "contract_activation",
+                "production_activation",
+                "production_source_activation",
+                "source_activation",
+            ):
+                if _authority_requested(proposal_payload.get(field_name)):
+                    raise MoneyAgentPermissionError("contract scout may not request production activation")
+            if _authority_requested(proposal_payload.get("money_allocation")):
                 raise MoneyAgentPermissionError("contract scout may not allocate money")
-            proposal = OpportunityContractProposal.from_dict(proposal_payload)
+            try:
+                proposal = OpportunityContractProposal.from_dict(proposal_payload)
+            except Exception as exc:
+                raise MoneyAgentPermissionError(f"contract scout proposal is malformed: {exc}") from exc
             validation = validator.validate(proposal)
             if proposal.paper_mode_feasibility.get("paper_only") is not True:
                 raise MoneyAgentPermissionError("contract scout may only propose paper-only contracts")
@@ -530,6 +544,16 @@ def _contains_secret_like_value(payload: Any) -> bool:
         lowered = payload.lower()
         return any(marker in lowered for marker in ("api_key=", "apikey=", "password=", "secret=", "sk-", "token="))
     return False
+
+
+def _authority_requested(value: Any) -> bool:
+    if value is None or value is False or value == 0:
+        return False
+    if isinstance(value, str) and value.strip().lower() in {"", "none", "false", "no"}:
+        return False
+    if isinstance(value, (dict, list, tuple, set)) and not value:
+        return False
+    return True
 
 
 def _is_explicitly_no_blind_access(value: Any) -> bool:

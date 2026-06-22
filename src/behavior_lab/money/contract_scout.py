@@ -35,9 +35,12 @@ REJECTION_REASONS = {
     "ambiguous_resolution",
     "duplicate_prior_proposal",
     "high_maintenance_low_value",
+    "malformed_proposal",
     "missing_available_actions",
     "missing_no_action",
+    "money_allocation_requested",
     "private_data_dependency_without_acquisition_path",
+    "production_source_activation_requested",
     "proposed_real_action",
     "real_account_mutation_required",
     "unbounded_capital_requirement",
@@ -50,25 +53,58 @@ REJECTION_REASONS = {
 
 REAL_ACTION_MARKERS = (
     "accept_offer",
+    "account_mutation",
+    "account_update",
     "broker",
     "buy_order",
     "counteroffer",
     "exchange_order",
+    "listing_mutation",
     "live_order",
     "make_offer",
     "market_order",
+    "mutate_listing",
+    "mutation",
     "order_submission",
     "place_order",
     "place_trade",
     "purchase",
+    "revise_listing",
+    "revise_listing_price",
     "sell_order",
+    "seller.update",
+    "seller.update_listing",
     "seller_mutation",
     "submit_market_order",
     "submit_offer",
     "submit_order",
     "trade_live",
     "transfer",
+    "update_listing",
+    "update_price",
 )
+
+PAPER_ACTION_TYPES = {
+    "no_action",
+    "paper_allocation",
+    "paper_cost_decision",
+    "paper_decision",
+    "paper_event_contract",
+    "paper_purchase_decision",
+    "paper_risk_decision",
+    "shadow_decision",
+}
+
+AUTHORITY_FIELD_REASONS = {
+    "activate_contract": "production_source_activation_requested",
+    "activate_source": "production_source_activation_requested",
+    "capital_allocation": "money_allocation_requested",
+    "contract_activation": "production_source_activation_requested",
+    "money_allocation": "money_allocation_requested",
+    "production_activation": "production_source_activation_requested",
+    "production_source_activation": "production_source_activation_requested",
+    "source_activation": "production_source_activation_requested",
+}
 
 SECRET_KEY_MARKERS = (
     "api_key",
@@ -163,30 +199,30 @@ class OpportunityContractProposal:
             title=str(payload.get("title", "")),
             contract_family=str(payload.get("contract_family", "")),
             outcome=str(payload.get("outcome", "")),
-            resolution_source=dict(payload.get("resolution_source", {})),
+            resolution_source=_dict_field(payload, "resolution_source"),
             resolution_cadence=str(payload.get("resolution_cadence", "")),
             decision_deadline=str(payload.get("decision_deadline", "")),
-            available_actions=list(payload.get("available_actions", [])),
+            available_actions=_list_field(payload, "available_actions"),
             no_action_alternative=str(payload.get("no_action_alternative", "")),
-            payoff_formula=dict(payload.get("payoff_formula", {})),
-            material_costs=list(payload.get("material_costs", [])),
-            capital_requirement=dict(payload.get("capital_requirement", {})),
-            maximum_possible_loss=dict(payload.get("maximum_possible_loss", {})),
-            required_source_families=list(payload.get("required_source_families", [])),
-            currently_available_sources=list(payload.get("currently_available_sources", [])),
-            missing_sources=list(payload.get("missing_sources", [])),
-            historical_depth=dict(payload.get("historical_depth", {})),
+            payoff_formula=_dict_field(payload, "payoff_formula"),
+            material_costs=_list_field(payload, "material_costs"),
+            capital_requirement=_dict_field(payload, "capital_requirement"),
+            maximum_possible_loss=_dict_field(payload, "maximum_possible_loss"),
+            required_source_families=_list_field(payload, "required_source_families"),
+            currently_available_sources=_list_field(payload, "currently_available_sources"),
+            missing_sources=_list_field(payload, "missing_sources"),
+            historical_depth=_dict_field(payload, "historical_depth"),
             prospective_duration_required=str(payload.get("prospective_duration_required", "")),
             expected_decision_frequency=str(payload.get("expected_decision_frequency", "")),
-            paper_mode_feasibility=dict(payload.get("paper_mode_feasibility", {})),
-            platform_regulatory_dependencies=list(payload.get("platform_regulatory_dependencies", [])),
-            credential_requirements=list(payload.get("credential_requirements", [])),
-            licensing_concerns=list(payload.get("licensing_concerns", [])),
-            estimated_research_cost=dict(payload.get("estimated_research_cost", {})),
+            paper_mode_feasibility=_dict_field(payload, "paper_mode_feasibility"),
+            platform_regulatory_dependencies=_list_field(payload, "platform_regulatory_dependencies"),
+            credential_requirements=_list_field(payload, "credential_requirements"),
+            licensing_concerns=_list_field(payload, "licensing_concerns"),
+            estimated_research_cost=_dict_field(payload, "estimated_research_cost"),
             estimated_maintenance_burden=str(payload.get("estimated_maintenance_burden", "medium")),
             expected_information_value=str(payload.get("expected_information_value", "medium")),
-            reason_it_may_fail=list(payload.get("reason_it_may_fail", [])),
-            citations=list(payload.get("citations", [])),
+            reason_it_may_fail=_list_field(payload, "reason_it_may_fail"),
+            citations=_list_field(payload, "citations"),
             status=str(payload.get("status", "proposed")),
         )
 
@@ -327,7 +363,43 @@ class ContractScout:
         duplicates: list[dict[str, Any]] = []
         approvals: list[dict[str, Any]] = []
         for raw in candidates:
-            proposal = OpportunityContractProposal.from_dict(raw)
+            raw_rejection_reasons = _raw_proposal_rejection_reasons(raw)
+            if raw_rejection_reasons:
+                payload = _raw_rejection_payload(raw, raw_rejection_reasons, operations_context)
+                key = payload["equivalence_key"]
+                if key in prior_keys:
+                    payload["validation"] = {
+                        **payload["validation"],
+                        "status": "duplicate",
+                        "eligible_for_experimental_portfolio": False,
+                        "reasons": sorted(set(payload["validation"].get("reasons", []) + ["duplicate_prior_proposal"])),
+                    }
+                    self.store.append("contract_scout_duplicate", payload)
+                    duplicates.append(payload)
+                    continue
+                prior_keys.add(key)
+                event = self.store.append("contract_scout_rejected", payload)
+                rejected.append(event["payload"])
+                continue
+            try:
+                proposal = OpportunityContractProposal.from_dict(raw)
+            except (ContractScoutError, TypeError, ValueError) as exc:
+                payload = _raw_rejection_payload(raw, _coercion_rejection_reasons(exc), operations_context)
+                key = payload["equivalence_key"]
+                if key in prior_keys:
+                    payload["validation"] = {
+                        **payload["validation"],
+                        "status": "duplicate",
+                        "eligible_for_experimental_portfolio": False,
+                        "reasons": sorted(set(payload["validation"].get("reasons", []) + ["duplicate_prior_proposal"])),
+                    }
+                    self.store.append("contract_scout_duplicate", payload)
+                    duplicates.append(payload)
+                    continue
+                prior_keys.add(key)
+                event = self.store.append("contract_scout_rejected", payload)
+                rejected.append(event["payload"])
+                continue
             key = proposal.equivalence_key()
             validation = self.validator.validate(proposal)
             payload = {
@@ -548,8 +620,22 @@ def load_proposals(path: str | Path) -> list[dict[str, Any]]:
     return [dict(item) for item in payload]
 
 
+def _dict_field(payload: dict[str, Any], field_name: str) -> dict[str, Any]:
+    value = payload.get(field_name, {})
+    if not isinstance(value, dict):
+        raise ContractScoutError(f"{field_name} must be an object")
+    return dict(value)
+
+
+def _list_field(payload: dict[str, Any], field_name: str) -> list[Any]:
+    value = payload.get(field_name, [])
+    if not isinstance(value, list):
+        raise ContractScoutError(f"{field_name} must be a list")
+    return list(value)
+
+
 def _action_ids(actions: list[dict[str, Any]]) -> set[str]:
-    return {str(action.get("action_id", "")).strip() for action in actions}
+    return {str(action.get("action_id", "")).strip() for action in actions if isinstance(action, dict)}
 
 
 def _nonnegative_number(value: Any) -> float | None:
@@ -563,11 +649,121 @@ def _nonnegative_number(value: Any) -> float | None:
 
 
 def _contains_real_action_shape(value: Any) -> bool:
+    if _contains_unsupported_action_type(value):
+        return True
     for key, item in _walk(value):
         text = f"{key} {item}".lower()
         if any(marker in text for marker in REAL_ACTION_MARKERS):
             return True
     return False
+
+
+def _contains_unsupported_action_type(value: Any) -> bool:
+    if not isinstance(value, list):
+        return True
+    for action in value:
+        if not isinstance(action, dict):
+            return True
+        action_type = str(action.get("action_type", "")).strip().lower()
+        if not action_type:
+            return True
+        if action_type in PAPER_ACTION_TYPES or action_type.startswith("paper_"):
+            continue
+        return True
+    return False
+
+
+def _raw_proposal_rejection_reasons(raw: Any) -> list[str]:
+    if not isinstance(raw, dict):
+        return ["malformed_proposal"]
+    reasons: list[str] = []
+    if "capital_requirement" in raw and not isinstance(raw.get("capital_requirement"), dict):
+        reasons.append("unbounded_capital_requirement")
+    if "maximum_possible_loss" in raw and not isinstance(raw.get("maximum_possible_loss"), dict):
+        reasons.append("unbounded_loss")
+    for field_name, reason in AUTHORITY_FIELD_REASONS.items():
+        if field_name in raw and _authority_requested(field_name, raw.get(field_name)):
+            reasons.append(reason)
+    activation_status = raw.get("activation_status")
+    if activation_status not in {None, "proposed", "research_only"}:
+        reasons.append("production_source_activation_requested")
+    if _contains_real_action_shape(raw.get("available_actions", [])):
+        reasons.append("proposed_real_action")
+    return sorted(set(reasons))
+
+
+def _authority_requested(field_name: str, value: Any) -> bool:
+    if field_name == "activation_status":
+        return value not in {None, "proposed", "research_only"}
+    if value is None or value is False or value == 0:
+        return False
+    if isinstance(value, str) and value.strip().lower() in {"", "none", "false", "no"}:
+        return False
+    if isinstance(value, dict) and not value:
+        return False
+    if isinstance(value, list) and not value:
+        return False
+    return True
+
+
+def _coercion_rejection_reasons(exc: Exception) -> list[str]:
+    text = str(exc)
+    reasons: list[str] = ["malformed_proposal"]
+    if "capital_requirement" in text:
+        reasons.append("unbounded_capital_requirement")
+    if "maximum_possible_loss" in text:
+        reasons.append("unbounded_loss")
+    if "payoff_formula" in text:
+        reasons.append("unusable_payoff")
+    return sorted(set(reasons))
+
+
+def _raw_rejection_payload(raw: Any, reasons: list[str], operations_context: dict[str, Any]) -> dict[str, Any]:
+    proposal = _raw_proposal_summary(raw)
+    validation = ValidationResult(
+        status="rejected",
+        eligible_for_experimental_portfolio=False,
+        reasons=sorted(set(reasons or ["malformed_proposal"])),
+        checks={"raw_shape_valid": False},
+    )
+    sanitized_raw = _redact_sensitive(raw)
+    return {
+        "schema_version": CONTRACT_SCOUT_SCHEMA_VERSION,
+        "proposal": proposal,
+        "proposal_hash": stable_hash(sanitized_raw),
+        "equivalence_key": stable_hash({"raw_proposal": sanitized_raw, "proposal_id": proposal["proposal_id"]}),
+        "validation": validation.to_dict(),
+        "operations_context_hash": stable_hash(operations_context),
+        "paper_only": _raw_paper_only(raw),
+        "production_source_activation": False,
+        "money_allocation": False,
+        "generated_at": utc_now(),
+    }
+
+
+def _raw_proposal_summary(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        sanitized = _redact_sensitive(raw)
+        proposal_id = str(sanitized.get("proposal_id") or stable_hash(sanitized)[:16])
+        return {
+            **sanitized,
+            "proposal_id": proposal_id,
+            "title": str(sanitized.get("title") or "<malformed contract proposal>"),
+            "contract_family": str(sanitized.get("contract_family") or "unknown"),
+        }
+    return {
+        "proposal_id": stable_hash({"raw_proposal": str(type(raw))})[:16],
+        "title": "<malformed contract proposal>",
+        "contract_family": "unknown",
+        "raw_type": type(raw).__name__,
+    }
+
+
+def _raw_paper_only(raw: Any) -> bool:
+    if not isinstance(raw, dict):
+        return False
+    feasibility = raw.get("paper_mode_feasibility")
+    return isinstance(feasibility, dict) and feasibility.get("paper_only") is True
 
 
 def _walk(value: Any, key: str = "") -> list[tuple[str, Any]]:
