@@ -18,4 +18,7 @@ Verdict: the result is not yet independently replicable as a Benchmark v1 claim.
 
 ## Recommendation
 
-Repeat only after the full protocol is implemented and the data/probe prerequisites are available. Preserve the current run as a diagnostic baseline, not as evidence for deployment.
+Do not repeat Benchmark v1. It is frozen and hidden-spent. Run Benchmark v2 or
+later only after the full protocol is implemented and the data/probe
+prerequisites are available. Preserve the current v1 run as a diagnostic
+baseline, not as evidence for deployment.

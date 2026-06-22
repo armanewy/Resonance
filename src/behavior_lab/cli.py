@@ -269,7 +269,7 @@ def command_offerlab_models_sample(args: argparse.Namespace) -> None:
 
 def command_offerlab_models_benchmark_v1(args: argparse.Namespace) -> None:
     final_manifest = Path("reports/offerlab_benchmark_v1_final_manifest.json")
-    if final_manifest.exists() and not getattr(args, "allow_fixture_v1_rerun", False):
+    if final_manifest.exists():
         manifest = json.loads(final_manifest.read_text(encoding="utf-8"))
         if manifest.get("hidden_status") == "hidden_spent":
             raise SystemExit(
@@ -689,7 +689,6 @@ def build_parser() -> argparse.ArgumentParser:
     offer_models_benchmark.add_argument("--lockbox-store", required=True, help="External durable JSONL event store for one-shot hidden submissions")
     offer_models_benchmark.add_argument("--row-cap", type=_positive, default=500)
     offer_models_benchmark.add_argument("--seed", type=int, default=20240621)
-    offer_models_benchmark.add_argument("--allow-fixture-v1-rerun", action="store_true", help=argparse.SUPPRESS)
     offer_models_benchmark.set_defaults(func=command_offerlab_models_benchmark_v1)
 
     demo = subparsers.add_parser("demo", help="Run all waves end-to-end with campaign-safe lockboxes")

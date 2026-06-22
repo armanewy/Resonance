@@ -17,4 +17,6 @@ Verdict: current evidence does not justify seller-facing recommendation logic.
 
 ## Recommendation
 
-Do not encode policy advice from this wave. The next valid step is measurement: authorized read-only current-state probes and a repeated full benchmark, not strategy deployment.
+Do not encode policy advice from this wave. The next valid step is measurement:
+authorized read-only current-state probes and Benchmark v2 or later with fresh
+hidden cases, not strategy deployment.

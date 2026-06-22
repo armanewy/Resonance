@@ -9,7 +9,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 import _bootstrap  # noqa: F401,E402
 
-from behavior_lab.offerlab_models.benchmark_v2_protocol import V2ProtocolError, validate_v2_hidden_exclusion
+from behavior_lab.offerlab_models.benchmark_v2_protocol import (
+    V2ProtocolError,
+    validate_v2_hidden_exclusion,
+    validate_v2_pre_hidden_readiness,
+)
 from behavior_lab.cli import main as cli_main
 
 
@@ -72,6 +76,7 @@ class OfferLabBenchmarkV2ProtocolTests(unittest.TestCase):
         self.assertTrue(hidden["exclude_all_v1_hidden_case_tokens"])
         self.assertTrue(hidden["block_hidden_creation_if_v1_tokens_unavailable"])
         self.assertTrue(hidden["external_v1_hidden_case_token_artifact_required_if_manifest_tokens_unavailable"])
+        self.assertNotIn("all_source_exclusion_proof_allowed", hidden)
         self.assertFalse(hidden["protocol_changes_after_hidden_access_allowed"])
 
     def test_v2_hidden_validator_blocks_when_v1_tokens_are_unavailable(self) -> None:
@@ -105,6 +110,42 @@ class OfferLabBenchmarkV2ProtocolTests(unittest.TestCase):
         )
         self.assertEqual(report.status, "ready")
         self.assertEqual(report.v1_exclusion_cases, 1)
+
+    def test_v2_pre_hidden_validator_requires_all_development_gates(self) -> None:
+        manifest = json.loads(V2_MANIFEST.read_text(encoding="utf-8"))
+        report = _valid_v2_readiness_report(manifest)
+
+        readiness = validate_v2_pre_hidden_readiness(v2_manifest=manifest, readiness_report=report)
+
+        self.assertEqual(readiness.status, "ready_for_hidden")
+        self.assertEqual(readiness.targets_checked, len(manifest["targets"]))
+        self.assertEqual(readiness.negative_controls_checked, len(manifest["negative_controls"]))
+
+    def test_v2_pre_hidden_validator_rejects_failed_controls_and_missing_censored_counts(self) -> None:
+        manifest = json.loads(V2_MANIFEST.read_text(encoding="utf-8"))
+        report = _valid_v2_readiness_report(manifest)
+        report["negative_controls"]["random_labels"]["passed"] = False
+
+        with self.assertRaisesRegex(V2ProtocolError, "negative control did not pass"):
+            validate_v2_pre_hidden_readiness(v2_manifest=manifest, readiness_report=report)
+
+        report = _valid_v2_readiness_report(manifest)
+        del report["task_manifests"]["seller_next_action"]["censored_outcome_rows"]
+        with self.assertRaisesRegex(V2ProtocolError, "censored_outcome_rows"):
+            validate_v2_pre_hidden_readiness(v2_manifest=manifest, readiness_report=report)
+
+    def test_v2_pre_hidden_validator_rejects_calibration_and_selection_failures(self) -> None:
+        manifest = json.loads(V2_MANIFEST.read_text(encoding="utf-8"))
+        report = _valid_v2_readiness_report(manifest)
+        report["calibration"]["seller_next_action"]["expected_calibration_error"] = 0.5
+
+        with self.assertRaisesRegex(V2ProtocolError, "ECE threshold failed"):
+            validate_v2_pre_hidden_readiness(v2_manifest=manifest, readiness_report=report)
+
+        report = _valid_v2_readiness_report(manifest)
+        report["model_selection"]["seller_next_action"]["hidden_results_used"] = True
+        with self.assertRaisesRegex(V2ProtocolError, "hidden results used"):
+            validate_v2_pre_hidden_readiness(v2_manifest=manifest, readiness_report=report)
 
     def test_v2_requires_calibration_coverage_controls_and_censored_label_handling(self) -> None:
         manifest = json.loads(V2_MANIFEST.read_text(encoding="utf-8"))
@@ -179,6 +220,71 @@ class OfferLabBenchmarkV2ProtocolTests(unittest.TestCase):
                     "outside-repo.jsonl",
                 ]
             )
+
+
+def _valid_v2_readiness_report(manifest: dict) -> dict:
+    splits = {}
+    for split in manifest["splits"]:
+        splits[split["name"]] = {**split, "passed": True}
+
+    task_manifests = {}
+    for target in manifest["targets"]:
+        task_manifests[target] = {
+            "eligible_rows": 100,
+            "supervised_rows": 80,
+            "unknown_outcome_rows": 10,
+            "censored_outcome_rows": 10,
+            "excluded_rows": 0,
+            "unknown_and_censored_labeled_as_rejection": False,
+        }
+
+    negative_controls = {
+        name: {"executed": True, "passed": True}
+        for name in manifest["negative_controls"]
+    }
+
+    objectives = manifest["model_selection_rule"]["target_objectives"]
+    calibration = {}
+    model_selection = {}
+    for target, objective in objectives.items():
+        if "log_loss" in objective["selection_metric"]:
+            calibration[target] = {
+                "ece_definition": manifest["calibration_acceptance"]["classification"]["ece_definition"],
+                "expected_calibration_error": 0.03,
+                "nonempty_reliability_bins": 6,
+                "macro_classwise_expected_calibration_error": 0.05,
+            }
+            selection = {
+                "relative_improvement": objective.get("minimum_relative_improvement", 0.05),
+            }
+        else:
+            calibration[target] = {
+                "central_interval_nominal_coverage": manifest["calibration_acceptance"]["regression"]["central_interval_nominal_coverage"],
+                "central_interval_absolute_error": 0.03,
+                "quantile_levels": manifest["calibration_acceptance"]["regression"]["quantile_levels"],
+            }
+            selection = {
+                "error_ratio_to_baseline": objective.get("maximum_error_ratio_to_baseline", 0.98),
+            }
+        selection.update(
+            {
+                "selection_metric": objective["selection_metric"],
+                "preregistered_baseline": objective["preregistered_baseline"],
+                "fit_on_training_only": True,
+                "hidden_results_used": False,
+                "primary_split_survival": objective["required_primary_split_survival"],
+                "support_coverage": objective.get("minimum_support_coverage", 1.0),
+            }
+        )
+        model_selection[target] = selection
+
+    return {
+        "splits": splits,
+        "task_manifests": task_manifests,
+        "negative_controls": negative_controls,
+        "calibration": calibration,
+        "model_selection": model_selection,
+    }
 
 
 if __name__ == "__main__":

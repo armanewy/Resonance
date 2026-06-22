@@ -41,12 +41,6 @@
     "exclude_all_v1_hidden_case_tokens": true,
     "v1_hidden_case_exclusion_source": "reports/offerlab_benchmark_v1_final_manifest.json",
     "external_v1_hidden_case_token_artifact_required_if_manifest_tokens_unavailable": true,
-    "all_source_exclusion_proof_allowed": true,
-    "all_source_exclusion_proof_required_fields": [
-      "strategy_id",
-      "artifact_hash",
-      "proves_zero_overlap"
-    ],
     "block_hidden_creation_if_v1_tokens_unavailable": true,
     "exclude_v1_hidden_case_tokens_before_sampling": true
   },

@@ -19,4 +19,7 @@ Verdict: do not advance to shadow mode or any paid experiment from the current e
 
 ## Recommendation
 
-Repeat after full normalization, full protocol split execution, complete negative controls, validated calibration, and non-row-capped model evaluation. Until then, treat all model metrics as diagnostic only.
+Do not repeat Benchmark v1. It is frozen and hidden-spent. Run Benchmark v2 or
+later after full normalization, full protocol split execution, complete
+negative controls, validated calibration, fresh hidden cases, and non-row-capped
+model evaluation. Until then, treat all model metrics as diagnostic only.
