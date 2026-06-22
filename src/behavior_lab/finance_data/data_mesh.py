@@ -35,15 +35,33 @@ UNCLEAR_LICENSE_STATUSES = {"", "ambiguous", "requires_acceptance", "requires_ap
 AMBIGUOUS_TIMESTAMP_VALUES = {"", "ambiguous", "current_only", "inferred", "latest_only", "local_time_unknown", "unknown"}
 SECRET_MARKERS = ("api_key=", "apikey=", "password=", "secret=", "sk-", "token=")
 DANGEROUS_CODE_MARKERS = (
+    "__import__",
+    "boto3",
     "broker",
+    "connect(",
+    "credential",
+    "dotenv",
+    "eval(",
+    "exec(",
+    "http.client",
+    "open(",
     "os.environ",
+    "os.getenv",
+    "os.system",
     "place_order",
     "production",
+    "psycopg",
+    "requests.",
     "secret",
     "seller.update",
+    "shutil",
+    "socket",
+    "sqlite3",
     "subprocess",
     "submit_order",
     "trade_live",
+    "urllib",
+    "write(",
 )
 MESH_AUTHORITY_FIELDS = {
     "activate_source",
@@ -322,8 +340,16 @@ class FinancialDataMesh:
             }
             self.store.append("data_mesh_manifest_trial_blocked", payload)
             return payload
-        typed = manifest if isinstance(manifest, DeclarativeSourceManifest) else DeclarativeSourceManifest.from_dict(manifest)
-        validation = self.validator.validate(typed)
+        try:
+            typed = manifest if isinstance(manifest, DeclarativeSourceManifest) else DeclarativeSourceManifest.from_dict(manifest)
+            validation = self.validator.validate(typed)
+        except Exception as exc:
+            payload = {
+                **_invalid_manifest_payload(manifest, ["malformed_manifest"], str(exc)),
+                "trial": {"status": "blocked", "reason": "malformed_manifest", "observations": 0},
+            }
+            self.store.append("data_mesh_manifest_trial_blocked", payload)
+            return payload
         if not validation.allowed_for_experimental_catalog:
             payload = {
                 **_manifest_payload(typed, validation),
@@ -442,13 +468,15 @@ class FinancialDataMesh:
             "production_state_mutated": False,
         }
         self.store.append("data_mesh_source_repair_diagnosed", diagnosis)
-        candidate = DeclarativeSourceManifest.from_dict(candidate_manifest)
-        trial = self.activate_manifest(candidate, fixture_payload=fixture_payload)
+        trial = self.activate_manifest(candidate_manifest, fixture_payload=fixture_payload)
+        replacement_manifest = trial.get("manifest", {}) if isinstance(trial.get("manifest"), dict) else {}
+        replacement_source_id = str(replacement_manifest.get("source_id") or _raw_manifest_field(candidate_manifest, "source_id"))
+        replacement_manifest_hash = str(trial.get("manifest_hash") or stable_hash(_redact_sensitive(candidate_manifest)))
         payload = {
             "schema_version": DATA_MESH_SCHEMA_VERSION,
             "previous_source_id": source_id,
-            "replacement_source_id": candidate.source_id,
-            "replacement_manifest_hash": candidate.manifest_hash(),
+            "replacement_source_id": replacement_source_id,
+            "replacement_manifest_hash": replacement_manifest_hash,
             "repair_status": "switched_experimental_version" if trial.get("status") == "experimental" else "repair_blocked",
             "isolated_canary": {"required": True, "status": "passed" if trial.get("status") == "experimental" else "blocked"},
             "semantic_audit": {"required": True, "status": "passed" if trial.get("status") == "experimental" else "blocked"},
@@ -645,7 +673,22 @@ def _raw_manifest_rejection_reasons(raw: Any) -> list[str]:
 
 
 def _run_fixture_trial(manifest: DeclarativeSourceManifest, *, fixture_payload: Any, fixture_name: str) -> dict[str, Any]:
-    records = _extract_records(manifest.adapter_type, fixture_payload)
+    parser_provenance = {
+        "adapter_type": manifest.adapter_type,
+        "parser": f"generic_{manifest.adapter_type}_fixture_parser",
+        "executed_generated_code": False,
+        "secret_exposure": False,
+    }
+    retrieval_provenance = {
+        "fixture_name": Path(fixture_name).name,
+        "source_artifact_hash": stable_hash(fixture_payload),
+    }
+    try:
+        records = _extract_records(manifest.adapter_type, fixture_payload)
+        parser_error = None
+    except Exception as exc:
+        records = []
+        parser_error = _redact_sensitive(str(exc))
     warnings: list[str] = []
     invalid: list[dict[str, Any]] = []
     observations = 0
@@ -672,12 +715,15 @@ def _run_fixture_trial(manifest: DeclarativeSourceManifest, *, fixture_payload: 
     status = "passed" if records and observations and not invalid else "failed"
     return {
         "status": status,
-        "fixture_name": fixture_name,
+        "fixture_name": Path(fixture_name).name,
         "record_count": len(records),
         "observations": observations,
         "invalid_records": invalid[:20],
         "warnings": sorted(set(warnings)),
-        "source_artifact_hash": stable_hash(fixture_payload),
+        "source_artifact_hash": retrieval_provenance["source_artifact_hash"],
+        "retrieval_provenance": retrieval_provenance,
+        "parser_provenance": parser_provenance,
+        "parser_error": parser_error,
         "parser_result": "parseable" if status == "passed" else "parse_failed",
         "rate_limit_enforced": manifest.rate_limits.get("bounded") is True,
         "bounded_live_trial": False,
@@ -745,6 +791,14 @@ def _manifest_family(manifest: dict[str, Any]) -> str:
     return str(manifest.get("source_family", "")).strip()
 
 
+def _raw_manifest_field(manifest: Any, field_name: str) -> str:
+    if isinstance(manifest, DeclarativeSourceManifest):
+        return str(getattr(manifest, field_name, ""))
+    if isinstance(manifest, dict):
+        return str(manifest.get(field_name, ""))
+    return ""
+
+
 def _diagnose_failure(failure: dict[str, Any]) -> str:
     text = json.dumps(_redact_sensitive(failure), sort_keys=True).lower()
     if "schema" in text or "field" in text:
@@ -796,20 +850,31 @@ def _truthy_authority(value: Any) -> bool:
 
 def _contains_secret_like_value(value: Any) -> bool:
     for key, item in _walk(value):
-        text = f"{key} {item}".lower()
-        if any(marker in text for marker in SECRET_MARKERS):
+        if _secret_like_text(str(key)) or _secret_like_text(str(item)):
             return True
     return False
 
 
 def _redact_sensitive(value: Any) -> Any:
     if isinstance(value, dict):
-        return {str(key): _redact_sensitive(item) for key, item in value.items()}
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if _secret_like_text(key_text):
+                redacted[key_text] = "[REDACTED]"
+            else:
+                redacted[key_text] = _redact_sensitive(item)
+        return redacted
     if isinstance(value, list):
         return [_redact_sensitive(item) for item in value]
-    if isinstance(value, str) and any(marker in value.lower() for marker in SECRET_MARKERS):
+    if isinstance(value, str) and _secret_like_text(value):
         return "[REDACTED]"
     return value
+
+
+def _secret_like_text(value: str) -> bool:
+    lowered = value.lower()
+    return any(marker.rstrip("=") in lowered for marker in SECRET_MARKERS)
 
 
 def _walk(value: Any, key: str = "") -> list[tuple[str, Any]]:

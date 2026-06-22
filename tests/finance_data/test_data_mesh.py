@@ -174,12 +174,102 @@ class FinancialDataMeshTests(unittest.TestCase):
             serialized = json.dumps(result, sort_keys=True)
             self.assertNotIn("secret-token", serialized)
 
+    def test_secret_values_under_secret_shaped_keys_are_redacted(self) -> None:
+        manifest = _manifest()
+        manifest["request_parameters"]["api_key"] = "plain-secret-value"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = FinancialDataMesh(tmp).validate_manifest(manifest)
+
+            self.assertEqual(result["validation"]["status"], "rejected")
+            self.assertIn("secret_exposure", result["validation"]["reasons"])
+            serialized = json.dumps(result, sort_keys=True)
+            self.assertIn("[REDACTED]", serialized)
+            self.assertNotIn("plain-secret-value", serialized)
+
+    def test_repair_rejects_nested_authority_fields_before_manifest_coercion(self) -> None:
+        candidate = _manifest(source_id="replacement_with_nested_authority", version="v2")
+        candidate["quality_checks"].append({"name": "looks_safe", "activation_status": "production"})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repaired = FinancialDataMesh(tmp).repair_source(
+                "official_json_cost_source",
+                failure={"error": "schema field changed"},
+                candidate_manifest=candidate,
+                fixture_payload=_fixture(),
+            )
+
+            self.assertEqual(repaired["repair_status"], "repair_blocked")
+            self.assertEqual(repaired["replacement_source_id"], "replacement_with_nested_authority")
+            self.assertIn("production_activation_requested", repaired["trial"]["validation"]["reasons"])
+            self.assertEqual(FinancialDataMesh(tmp).catalog()["sources"], [])
+
+    def test_malformed_manifest_trial_is_appended_as_blocked_not_raised(self) -> None:
+        manifest = _manifest(normalized_series={"not": "a list"})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mesh = FinancialDataMesh(tmp)
+            result = mesh.activate_manifest(manifest, fixture_payload=_fixture())
+
+            self.assertEqual(result["validation"]["status"], "rejected")
+            self.assertEqual(result["trial"]["status"], "blocked")
+            self.assertIn("malformed_manifest", result["validation"]["reasons"])
+            self.assertTrue(mesh.verify())
+
+    def test_generic_adapter_parser_fails_closed_on_malformed_feed_with_provenance(self) -> None:
+        manifest = _manifest(
+            adapter_type="rss_atom",
+            event_timestamp={"field": "pubDate", "semantics": "provider_event_time"},
+            availability_timestamp={"field": "published", "semantics": "provider_publication_time"},
+            normalized_series=[
+                {
+                    "series_id": "official_json_cost_source.hourly_cost",
+                    "display_name": "Hourly Cost",
+                    "observation_kind": "economic_release",
+                    "value_field": "cost",
+                    "event_time_field": "pubDate",
+                    "availability_time_field": "published",
+                    "unit": "USD",
+                    "geography": {"type": "global", "id": "001"},
+                    "contract_usage": ["compute_cost_avoidance"],
+                }
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = FinancialDataMesh(tmp).activate_manifest(
+                manifest,
+                fixture_payload="<rss><channel><item><cost>12.5</cost>",
+                fixture_name="C:\\Users\\audit\\secret_fixture.xml",
+            )
+
+            self.assertEqual(result["trial"]["status"], "failed")
+            self.assertEqual(result["trial"]["parser_result"], "parse_failed")
+            self.assertEqual(result["trial"]["fixture_name"], "secret_fixture.xml")
+            self.assertFalse(result["trial"]["parser_provenance"]["executed_generated_code"])
+            self.assertIn("source_artifact_hash", result["trial"]["retrieval_provenance"])
+            self.assertNotIn("C:\\Users\\audit", json.dumps(result))
+
     def test_malicious_generated_connector_is_sandbox_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = FinancialDataMesh(tmp).audit_generated_connector(
                 source_id="official_json_cost_source",
                 manifest_hash="abc123",
                 code="import os\nos.environ['TOKEN']\nbroker.place_order()\n",
+            )
+
+            self.assertFalse(result["accepted"])
+            self.assertTrue(result["sandboxed"])
+            self.assertFalse(result["inherits_parent_environment"])
+            self.assertFalse(result["production_database_writes"])
+            self.assertIn("malicious_generated_connector", result["reasons"])
+
+    def test_generated_connector_with_file_db_and_network_access_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = FinancialDataMesh(tmp).audit_generated_connector(
+                source_id="official_json_cost_source",
+                manifest_hash="abc123",
+                code="import sqlite3, socket\nopen('production.db', 'w').write('x')\nsocket.create_connection(('example.com', 443))\n",
             )
 
             self.assertFalse(result["accepted"])

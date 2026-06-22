@@ -1,0 +1,107 @@
+{
+  "audit_id": "FINANCIAL_DATA_MESH_681C04E",
+  "verdict": "PASS_AFTER_AUDIT_FIX",
+  "commit_audited": "681c04e5fa8b86e788abc84877fc54e0d9a6ee79",
+  "feature": "Wave 2 self-expanding experimental financial data mesh",
+  "scope": [
+    "src/behavior_lab/finance_data/data_mesh.py",
+    "src/behavior_lab/finance_data/__init__.py",
+    "src/behavior_lab/cli.py data-mesh commands",
+    "tests/finance_data/test_data_mesh.py",
+    "docs/finance/FINANCIAL_DATA_MESH.md"
+  ],
+  "findings": [
+    {
+      "id": "FDM-681C04E-001",
+      "severity": "P1",
+      "status": "fixed_in_audit_worktree",
+      "title": "Repair candidate manifest coercion could drop nested authority fields before activation",
+      "description": "repair_source coerced candidate_manifest to DeclarativeSourceManifest before activation, allowing unknown nested authority fields to be discarded before raw manifest rejection.",
+      "references": [
+        "src/behavior_lab/finance_data/data_mesh.py:445",
+        "src/behavior_lab/finance_data/data_mesh.py:446",
+        "tests/finance_data/test_data_mesh.py:190"
+      ]
+    },
+    {
+      "id": "FDM-681C04E-002",
+      "severity": "P1",
+      "status": "fixed_in_audit_worktree",
+      "title": "Malformed manifests and fixtures could escape append-only failed-trial recording",
+      "description": "trial_manifest and the generic adapter parser could raise on malformed input instead of appending blocked or failed trial records with parser provenance.",
+      "references": [
+        "src/behavior_lab/finance_data/data_mesh.py:343",
+        "src/behavior_lab/finance_data/data_mesh.py:675",
+        "tests/finance_data/test_data_mesh.py:207",
+        "tests/finance_data/test_data_mesh.py:219"
+      ]
+    },
+    {
+      "id": "FDM-681C04E-003",
+      "severity": "P2",
+      "status": "fixed_in_audit_worktree",
+      "title": "Secret-shaped keys could preserve secret values in audit payloads",
+      "description": "Secret detection and redaction focused on marker substrings in values, so api_key-like keys could leave their values visible.",
+      "references": [
+        "src/behavior_lab/finance_data/data_mesh.py:851",
+        "src/behavior_lab/finance_data/data_mesh.py:858",
+        "tests/finance_data/test_data_mesh.py:177"
+      ]
+    },
+    {
+      "id": "FDM-681C04E-004",
+      "severity": "P1",
+      "status": "fixed_in_audit_worktree",
+      "title": "Generated connector audit could accept file, database, network, or dynamic-execution code",
+      "description": "The generated connector audit marker list did not cover common non-sandbox-safe capabilities, weakening the sandbox-only acceptance signal.",
+      "references": [
+        "src/behavior_lab/finance_data/data_mesh.py:37",
+        "src/behavior_lab/finance_data/data_mesh.py:536",
+        "tests/finance_data/test_data_mesh.py:267"
+      ]
+    },
+    {
+      "id": "FDM-681C04E-005",
+      "severity": "P3",
+      "status": "residual_non_blocking",
+      "title": "Catalog CLI output exposes the local state_dir path",
+      "description": "FinancialDataMesh.catalog includes an absolute local state_dir path. This exposes local path metadata but no secrets and does not affect activation or production mutation boundaries.",
+      "references": [
+        "src/behavior_lab/finance_data/data_mesh.py:586"
+      ]
+    }
+  ],
+  "audit_questions": {
+    "experimental_only_no_real_actions": "PASS_AFTER_FIX",
+    "authority_fields_not_silently_dropped": "PASS_AFTER_FIX",
+    "licenses_credentials_generated_connectors_timestamps_rate_limits_revisions_block_activation": "PASS",
+    "append_only_auditable_operations": "PASS_AFTER_FIX",
+    "generic_adapter_fail_closed_with_provenance": "PASS_AFTER_FIX",
+    "generated_connector_sandbox_only": "PASS_AFTER_FIX",
+    "repair_preserves_versions_and_experimental_scope": "PASS_AFTER_FIX",
+    "cli_paths_or_secrets": "PASS_WITH_P3_RESIDUAL",
+    "wave2_required_tests_covered": "PASS_AFTER_FIX",
+    "full_suite": "PASS"
+  },
+  "tests_run": [
+    {
+      "command": "python -m pytest tests\\finance_data\\test_data_mesh.py -q",
+      "result": "18 passed"
+    },
+    {
+      "command": "python -m pytest tests\\finance_data -q",
+      "result": "26 passed"
+    },
+    {
+      "command": "python -m pytest -q",
+      "result": "passed with exit code 0; 432 tests collected by python -m pytest --collect-only -q"
+    }
+  ],
+  "fixes_made": true,
+  "changed_files": [
+    "src/behavior_lab/finance_data/data_mesh.py",
+    "tests/finance_data/test_data_mesh.py",
+    "docs/audits/FINANCIAL_DATA_MESH_681C04E_AUDIT.md",
+    "docs/audits/FINANCIAL_DATA_MESH_681C04E_AUDIT.json"
+  ]
+}
