@@ -146,6 +146,14 @@ class MoneyOperations:
         for lab, expected in manifest.get("canary_hashes", {}).items():
             report = status["canaries"].get(lab)
             if not report:
+                seller_readiness = manifest.get("seller_readiness", {})
+                if (
+                    lab == "offerlab_seller_pilot"
+                    and expected.get("status") == "blocked"
+                    and seller_readiness.get("passed") is not True
+                    and seller_readiness.get("canary_start_allowed") is not True
+                ):
+                    continue
                 issues.append({"severity": "error", "code": "missing_canary", "lab": lab})
                 continue
             actual = stable_hash(report["protocol"]) if report.get("protocol") else None

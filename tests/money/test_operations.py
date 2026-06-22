@@ -71,6 +71,31 @@ class MoneyOperationsTests(unittest.TestCase):
             weather = operations.status()["canaries"]["weather_edge"]
             self.assertEqual(weather["metrics"]["snapshot_count"], 1)
 
+    def test_doctor_allows_intentionally_blocked_seller_canary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            operations = MoneyOperations(Path(tmp) / "ops")
+            started = operations.start(as_of="2026-07-01T12:00:00+00:00", release_commit=DEFAULT_RELEASE_COMMIT)
+
+            doctor = operations.doctor()
+
+            self.assertEqual(started["manifest"]["canary_hashes"]["offerlab_seller_pilot"].get("status"), "blocked")
+            self.assertTrue(doctor["healthy"])
+            self.assertFalse(any(issue["code"] == "missing_canary" for issue in doctor["issues"]))
+
+    def test_doctor_does_not_allow_blocked_public_canary_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            operations = MoneyOperations(Path(tmp) / "ops")
+            operations.start(as_of="2026-07-01T12:00:00+00:00", release_commit=DEFAULT_RELEASE_COMMIT)
+            manifest_path = Path(tmp) / "ops" / "release_manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["canary_hashes"]["weather_edge"] = {"status": "blocked", "reason": "forged_public_canary_block"}
+            manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+            doctor = operations.doctor()
+
+            self.assertFalse(doctor["healthy"])
+            self.assertTrue(any(issue["code"] == "missing_canary" and issue["lab"] == "weather_edge" for issue in doctor["issues"]))
+
     def test_canary_hash_mismatch_and_frozen_strategy_mutation_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             operations = MoneyOperations(Path(tmp) / "ops")
