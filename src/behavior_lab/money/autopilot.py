@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 import json
 from pathlib import Path
+import re
 import tempfile
 from typing import Any
 
@@ -65,6 +66,30 @@ APPROVAL_REASONS = {
 }
 LABS = {"offerlab_seller_pilot", "weather_edge", "etf_risk"}
 REAL_ACTION_MARKERS = ("real_action", "submit_order", "broker", "trade_live", "seller_mutation")
+CONNECTOR_DANGER_MARKERS = (
+    "broker",
+    "buy",
+    "exchange",
+    "live_order",
+    "order",
+    "place_live",
+    "place_order",
+    "purchase",
+    "sell",
+    "submit",
+    "trade",
+)
+SECRET_KEY_MARKERS = (
+    "api_key",
+    "apikey",
+    "authorization",
+    "credential",
+    "map_key",
+    "password",
+    "secret",
+    "token",
+)
+SECRET_VALUE_MARKERS = ("audit_secret_token",)
 PAPER_NOTICE = "PAPER — NO REAL ACTION EXECUTED"
 
 
@@ -198,7 +223,7 @@ class MoneyAutopilot:
                                 "contract_id": contract.contract_id,
                                 "task_type": task_type,
                                 "error_type": type(exc).__name__,
-                                "error": str(exc),
+                                "error": _redact_secrets(str(exc)),
                                 "isolated_failure": True,
                             }
                         ),
@@ -302,21 +327,38 @@ class MoneyAutopilot:
     def weekly_report(self, *, write_event: bool = False) -> dict[str, Any]:
         decisions = [event["payload"] for event in self._events("autopilot_paper_decision")]
         opportunities = [event["payload"] for event in self._events("autopilot_paper_opportunity")]
+        resolved = [event["payload"] for event in self._events("autopilot_resolved_paper_outcome")]
         approvals = self.approvals()["approvals"]
-        net_values = [float(item.get("conservative_expected_net_value") or 0.0) for item in decisions]
-        paper_value = round(sum(net_values), 2)
+        prospective_values = [float(item.get("conservative_expected_net_value") or 0.0) for item in decisions]
+        realized_values = [float(item.get("realized_net_value") or item.get("paper_realized_net_value") or 0.0) for item in resolved]
+        paper_value = round(sum(realized_values), 2)
+        prospective_value = round(sum(prospective_values), 2)
         decision_count = len(decisions)
         no_action_count = sum(1 for item in decisions if item.get("selected_action") in {"abstain", "no_trade", "cash"})
         by_contract: dict[str, float] = {}
         by_strategy: dict[str, float] = {}
         by_source: dict[str, float] = {}
+        prospective_by_contract: dict[str, float] = {}
+        prospective_by_strategy: dict[str, float] = {}
+        prospective_by_source: dict[str, float] = {}
         capital = 0.0
-        for item in decisions:
-            value = float(item.get("conservative_expected_net_value") or 0.0)
+        for item in resolved:
+            value = float(item.get("realized_net_value") or item.get("paper_realized_net_value") or 0.0)
             by_contract[item["contract_id"]] = round(by_contract.get(item["contract_id"], 0.0) + value, 2)
             by_strategy[str(item.get("strategy_id", "fixture"))] = round(by_strategy.get(str(item.get("strategy_id", "fixture")), 0.0) + value, 2)
             by_source[str(item.get("source_id", item.get("lab", "unknown")))] = round(
                 by_source.get(str(item.get("source_id", item.get("lab", "unknown"))), 0.0) + value,
+                2,
+            )
+        for item in decisions:
+            value = float(item.get("conservative_expected_net_value") or 0.0)
+            prospective_by_contract[item["contract_id"]] = round(prospective_by_contract.get(item["contract_id"], 0.0) + value, 2)
+            prospective_by_strategy[str(item.get("strategy_id", "fixture"))] = round(
+                prospective_by_strategy.get(str(item.get("strategy_id", "fixture")), 0.0) + value,
+                2,
+            )
+            prospective_by_source[str(item.get("source_id", item.get("lab", "unknown")))] = round(
+                prospective_by_source.get(str(item.get("source_id", item.get("lab", "unknown"))), 0.0) + value,
                 2,
             )
             capital += float(item.get("capital_required") or 0.0)
@@ -325,16 +367,20 @@ class MoneyAutopilot:
             "schema_version": "money_autopilot_weekly_report.v1",
             "portfolio_id": self.portfolio.portfolio_id,
             "realized_paper_value": paper_value,
-            "seller_shadow_savings": round(sum(float(item.get("seller_shadow_value") or 0.0) for item in decisions), 2),
-            "prospective_paper_pnl": paper_value,
+            "seller_shadow_savings": round(sum(float(item.get("seller_shadow_value") or 0.0) for item in resolved), 2),
+            "prospective_paper_pnl": prospective_value,
+            "prospective_seller_shadow_value": round(sum(float(item.get("seller_shadow_value") or 0.0) for item in decisions), 2),
             "capital_hypothetically_at_risk": round(capital, 2),
-            "maximum_drawdown": maximum_drawdown(_cumulative(net_values))["maximum_drawdown"],
+            "maximum_drawdown": maximum_drawdown(_cumulative(realized_values))["maximum_drawdown"],
             "no_action_rate": round(no_action_count / decision_count, 6) if decision_count else 0.0,
             "calibration": {"available": False, "reason": "fixture_paper_runner_no_resolved_probability_sample"},
             "decision_count": decision_count,
             "value_by_contract": by_contract,
             "value_by_strategy": by_strategy,
             "value_by_source": by_source,
+            "prospective_value_by_contract": prospective_by_contract,
+            "prospective_value_by_strategy": prospective_by_strategy,
+            "prospective_value_by_source": prospective_by_source,
             "llm_api_research_costs": usage,
             "maintenance_incidents": len(self._events("autopilot_task_failed")),
             "approvals_waiting": len(approvals),
@@ -384,15 +430,16 @@ class MoneyAutopilot:
         return event["payload"]
 
     def _source_health(self, contract: ContractConfig) -> None:
-        if contract.source_config.get("requires_credential") and not contract.source_config.get("credential_available"):
+        credential_blocked = bool(contract.source_config.get("requires_credential") and not contract.source_config.get("credential_available"))
+        if credential_blocked:
             self._request_approval(contract, "missing_credential", "Configured source needs a credential before source update.")
         self.store.append(
             "autopilot_source_health",
             self._base_payload(
                 {
                     "contract_id": contract.contract_id,
-                    "source_id": contract.source_config.get("source_id", contract.lab),
-                    "healthy": not contract.source_config.get("simulate_failure"),
+                    "source_id": _redact_secrets(contract.source_config.get("source_id", contract.lab)),
+                    "healthy": not contract.source_config.get("simulate_failure") and not credential_blocked,
                     "paper_only": True,
                 }
             ),
@@ -405,6 +452,8 @@ class MoneyAutopilot:
             self._request_approval(contract, "paid_source", "Paid source requires approval.")
         if contract.source_config.get("private_data_ambiguity"):
             self._request_approval(contract, "private_data_ambiguity", "Private-data use is ambiguous.")
+        if contract.source_config.get("production_source_promotion"):
+            self._request_approval(contract, "production_source_promotion", "Production source promotion requires explicit approval.")
         equivalent_hash = stable_hash(
             {
                 "contract_id": contract.contract_id,
@@ -428,7 +477,8 @@ class MoneyAutopilot:
     def _connector_maintenance(self, contract: ContractConfig) -> None:
         evidence_hash = stable_hash(contract.source_config)
         connector_name = str(contract.source_config.get("connector", "fixture"))
-        blocked = any(marker in connector_name.lower() for marker in REAL_ACTION_MARKERS)
+        redacted_connector = _redact_secrets(connector_name)
+        blocked = any(marker in connector_name.lower() for marker in CONNECTOR_DANGER_MARKERS)
         if blocked:
             self.store.append(
                 "autopilot_connector_attempt_failed",
@@ -436,6 +486,7 @@ class MoneyAutopilot:
                     {
                         "contract_id": contract.contract_id,
                         "evidence_hash": evidence_hash,
+                        "connector": redacted_connector,
                         "reason": "malicious_connector_blocked",
                         "changed_evidence_required_before_retry": True,
                     }
@@ -444,7 +495,7 @@ class MoneyAutopilot:
             return
         self.store.append(
             "autopilot_connector_attempt_completed",
-            self._base_payload({"contract_id": contract.contract_id, "evidence_hash": evidence_hash, "connector": connector_name}),
+            self._base_payload({"contract_id": contract.contract_id, "evidence_hash": evidence_hash, "connector": redacted_connector}),
         )
 
     def _blind_evaluation(self, contract: ContractConfig) -> None:
@@ -499,7 +550,7 @@ class MoneyAutopilot:
         else:
             raise MoneyAutopilotError(f"unsupported lab: {contract.lab}")
         self.store.append("autopilot_paper_decision", self._base_payload(decision))
-        if _is_notifiable(decision, contract) and not self._duplicate_alert(decision) and not self._alert_budget_exhausted():
+        if self._opportunity_allowed(decision, contract):
             self.store.append(
                 "autopilot_paper_opportunity",
                 self._base_payload(
@@ -592,8 +643,24 @@ class MoneyAutopilot:
     def _request_approval(self, contract: ContractConfig, reason: str, message: str) -> None:
         if reason not in APPROVAL_REASONS:
             raise MoneyAutopilotError(f"approval reason is not allowed: {reason}")
-        approval_id = stable_hash({"portfolio": self.portfolio.portfolio_hash(), "contract": contract.contract_id, "reason": reason})[:16]
+        approval_id = self._approval_id(contract, reason)
         if any(event["payload"].get("approval_id") == approval_id for event in self._events("autopilot_approval_requested")):
+            return
+        if self._budget_status()["approvals_per_week"]["remaining"] <= 0:
+            if not any(event["payload"].get("approval_id") == approval_id for event in self._events("autopilot_approval_suppressed")):
+                self.store.append(
+                    "autopilot_approval_suppressed",
+                    self._base_payload(
+                        {
+                            "approval_id": approval_id,
+                            "contract_id": contract.contract_id,
+                            "reason": reason,
+                            "message": message,
+                            "budget": "approvals_per_week",
+                            "real_action_executed": False,
+                        }
+                    ),
+                )
             return
         self.store.append(
             "autopilot_approval_requested",
@@ -724,12 +791,69 @@ class MoneyAutopilot:
     def _approval_resolved(self, approval_id: str) -> bool:
         return any(event["payload"].get("approval_id") == approval_id for event in self._events("autopilot_approval_resolved"))
 
+    def _approval_id(self, contract: ContractConfig, reason: str) -> str:
+        return stable_hash({"portfolio": self.portfolio.portfolio_hash(), "contract": contract.contract_id, "reason": reason})[:16]
+
+    def _approval_reason_resolved(self, contract: ContractConfig, reason: str) -> bool:
+        return self._approval_resolved(self._approval_id(contract, reason))
+
+    def _waiting_approvals(self, contract_id: str) -> list[dict[str, Any]]:
+        return [
+            event["payload"]
+            for event in self._events("autopilot_approval_requested")
+            if event["payload"].get("contract_id") == contract_id and not self._approval_resolved(event["payload"]["approval_id"])
+        ]
+
+    def _source_approval_blockers(self, contract: ContractConfig) -> list[str]:
+        checks = {
+            "missing_credential": bool(contract.source_config.get("requires_credential") and not contract.source_config.get("credential_available")),
+            "unclear_license": contract.source_config.get("license_status") in {"unclear", "unknown"},
+            "paid_source": bool(contract.source_config.get("paid_source")),
+            "private_data_ambiguity": bool(contract.source_config.get("private_data_ambiguity")),
+            "production_source_promotion": bool(contract.source_config.get("production_source_promotion")),
+        }
+        return [reason for reason, blocked in checks.items() if blocked and not self._approval_reason_resolved(contract, reason)]
+
     def _latest_event_payload(self, event_type: str, contract_id: str) -> dict[str, Any] | None:
         match = None
         for event in self._events(event_type):
             if event["payload"].get("contract_id") == contract_id:
                 match = event["payload"]
         return match
+
+    def _opportunity_allowed(self, decision: dict[str, Any], contract: ContractConfig) -> bool:
+        if not _is_notifiable(decision, contract):
+            return False
+        if self._duplicate_alert(decision) or self._alert_budget_exhausted():
+            return False
+        if not decision.get("paper_only"):
+            return False
+        if self._waiting_approvals(contract.contract_id) or self._source_approval_blockers(contract):
+            return False
+        source_health = self._latest_event_payload("autopilot_source_health", contract.contract_id)
+        if not source_health or source_health.get("healthy") is not True:
+            return False
+        if not self._latest_event_payload("autopilot_blind_evaluation_consumed", contract.contract_id):
+            return False
+        prospective = self._latest_event_payload("autopilot_prospective_incubation", contract.contract_id)
+        min_episodes = int(contract.prospective_requirements.get("min_unseen_episodes", 1) or 1)
+        if not prospective or int(prospective.get("unseen_episode_count", 0)) < min_episodes:
+            return False
+        if prospective.get("refit_performed") is not False:
+            return False
+        if int(decision.get("unknown_cost_basis_count", 0) or 0) > 0:
+            return False
+        if decision.get("material_costs_known", True) is not True:
+            return False
+        if decision.get("forecast_current", True) is not True:
+            return False
+        if decision.get("liquidity_capacity_ok", True) is not True:
+            return False
+        if decision.get("deadline_open", True) is not True:
+            return False
+        if decision.get("action_mode", "reactive") != "reactive":
+            return False
+        return True
 
     def _duplicate_alert(self, decision: dict[str, Any]) -> bool:
         key = (decision.get("contract_id"), decision.get("decision_id"), decision.get("selected_action"))
@@ -777,7 +901,12 @@ def _load_mapping(path: str | Path) -> dict[str, Any]:
     try:
         payload = json.loads(text)
     except json.JSONDecodeError:
-        payload = _parse_simple_yaml(text)
+        try:
+            import yaml  # type: ignore[import-not-found]
+
+            payload = yaml.safe_load(text)
+        except Exception:
+            payload = _parse_simple_yaml(text)
     if not isinstance(payload, dict):
         raise MoneyAutopilotError("portfolio file must contain an object")
     return payload
@@ -787,10 +916,12 @@ def _parse_simple_yaml(text: str) -> dict[str, Any]:
     result: dict[str, Any] = {}
     current_key: str | None = None
     current_item: dict[str, Any] | None = None
+    current_nested: str | None = None
     for raw_line in text.splitlines():
         line = raw_line.split("#", 1)[0].rstrip()
         if not line.strip():
             continue
+        indent = len(line) - len(line.lstrip(" "))
         if not line.startswith(" ") and ":" in line:
             key, value = line.split(":", 1)
             key = key.strip()
@@ -803,17 +934,29 @@ def _parse_simple_yaml(text: str) -> dict[str, Any]:
                 current_key = key
             continue
         stripped = line.strip()
-        if current_key == "contracts" and stripped.startswith("- "):
+        if current_key == "contracts" and indent == 2 and stripped.startswith("- "):
             current_item = {}
+            current_nested = None
             result["contracts"].append(current_item)
             body = stripped[2:]
             if body and ":" in body:
                 key, value = body.split(":", 1)
                 current_item[key.strip()] = _parse_scalar(value.strip())
             continue
-        if current_key == "contracts" and current_item is not None and ":" in stripped:
+        if current_key == "contracts" and current_item is not None and indent == 4 and ":" in stripped:
             key, value = stripped.split(":", 1)
-            current_item[key.strip()] = _parse_scalar(value.strip())
+            key = key.strip()
+            value = value.strip()
+            if value:
+                current_item[key] = _parse_scalar(value)
+                current_nested = None
+            else:
+                current_item[key] = {}
+                current_nested = key
+            continue
+        if current_key == "contracts" and current_item is not None and current_nested and indent >= 6 and ":" in stripped:
+            key, value = stripped.split(":", 1)
+            current_item[current_nested][key.strip()] = _parse_scalar(value.strip())
             continue
         if current_key and isinstance(result.get(current_key), dict) and ":" in stripped:
             key, value = stripped.split(":", 1)
@@ -856,6 +999,28 @@ def _reject_real_action_config(value: Any) -> None:
     lowered = json.dumps(sanitized, sort_keys=True).lower() if sanitized else ""
     if any(marker in lowered for marker in REAL_ACTION_MARKERS):
         raise MoneyAutopilotError("portfolio config may not request real actions")
+
+
+def _redact_secrets(value: Any) -> Any:
+    if isinstance(value, dict):
+        output: dict[str, Any] = {}
+        for key, child in value.items():
+            key_text = str(key).lower()
+            if any(marker in key_text for marker in SECRET_KEY_MARKERS):
+                output[key] = "[REDACTED]"
+            else:
+                output[key] = _redact_secrets(child)
+        return output
+    if isinstance(value, list):
+        return [_redact_secrets(item) for item in value]
+    if not isinstance(value, str):
+        return value
+    lowered = value.lower()
+    if any(marker in lowered for marker in SECRET_VALUE_MARKERS):
+        return "[REDACTED]"
+    if re.search(r"(?i)(bearer|token|api[_-]?key|secret|password)=", value):
+        return re.sub(r"(?i)((?:[?&]|^)(?:api[_-]?key|token|access[_-]?token|secret|password|key)=)[^&\s]+", r"\1[REDACTED]", value)
+    return value
 
 
 def _production_state_flags() -> dict[str, bool]:

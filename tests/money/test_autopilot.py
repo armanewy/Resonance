@@ -77,7 +77,7 @@ class MoneyAutopilotTests(unittest.TestCase):
             status = autopilot.status()
 
             self.assertTrue(result["ledger_valid"])
-            self.assertTrue({"offerlab_seller_pilot", "weather_edge", "authorized_fixture"} <= set(result["weekly_report"]["value_by_source"]))
+            self.assertTrue({"offerlab_seller_pilot", "weather_edge", "authorized_fixture"} <= set(result["weekly_report"]["prospective_value_by_source"]))
             self.assertEqual({contract["contract_id"] for contract in status["contracts"]}, {"seller", "weather", "etf"})
             self.assertGreaterEqual(result["weekly_report"]["decision_count"], 3)
             self.assertFalse(any(result["production_state"].values()))
