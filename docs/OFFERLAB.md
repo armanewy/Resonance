@@ -52,6 +52,23 @@ The report contains:
 
 It also includes a data-quality score based on seller cost-basis coverage, actual eBay fee coverage, mature return-window coverage, and traffic freshness.
 
+## Seller Pilot Kit
+
+The local seller pilot kit imports seller-provided exports without eBay API access:
+
+```powershell
+python -m behavior_lab offerlab-pilot template
+python -m behavior_lab offerlab-pilot inspect C:\OfferLabData\seller_pilot_drop
+python -m behavior_lab offerlab-pilot import C:\OfferLabData\seller_pilot_drop
+python -m behavior_lab offerlab-pilot audit PILOT_ID
+```
+
+Supported pilot files are CSV, JSON/JSONL, and Parquet when `pyarrow` or `pandas` is installed. The template covers listings, offers and seller responses, completed orders, actual platform fees, shipping costs, item cost basis, cancellations and unpaid orders, returns and refunds, current inventory, and listing traffic.
+
+Seller data must stay outside this repository. Import refuses input directories or ledger roots inside the repo. Every imported version records source file hashes, row hashes, the schema version, and the explicit source-column-to-canonical-column mapping. Unknown source columns are rejected unless they are explicitly mapped in `pilot_manifest.json`.
+
+The read-only audit reports the offer funnel, acceptance and payment rates, response latency, realized price versus asking price, mature contribution margin, cancellation and return effects, category and inventory-age breakdowns, data-quality gaps, and whether shadow evaluation is possible. The readiness gate requires sufficient mature outcomes, cost coverage, fee coverage, return-window coverage, and decision-history coverage. Missing cost basis is reported and never imputed.
+
 ## Integrity Rules
 
 - `seller_cost_basis` may be `null`, but recommendations must abstain when it is missing.

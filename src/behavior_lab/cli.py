@@ -55,6 +55,12 @@ from behavior_lab.offerlab import (
     write_campaign_002_template,
     load_offerlab_snapshots,
 )
+from behavior_lab.offerlab_pilot import (
+    audit_pilot,
+    import_pilot,
+    inspect_input as inspect_pilot_input,
+    write_template as write_pilot_template,
+)
 from behavior_lab.offerlab_models import run_sample_research_suite
 from behavior_lab.offerlab_models.benchmark_v1 import BenchmarkPaths, run_offerlab_benchmark_v1
 from behavior_lab.research_api import ResearchAPI
@@ -262,6 +268,22 @@ def command_offerlab_recommend(args: argparse.Namespace) -> None:
     if args.config:
         config = json.loads(Path(args.config).read_text(encoding="utf-8"))
     _print_json(recommend_offer_action(snapshots[0], data_dir=args.data_dir, config=config))
+
+
+def command_offerlab_pilot_template(args: argparse.Namespace) -> None:
+    _print_json(write_pilot_template(args.output_dir))
+
+
+def command_offerlab_pilot_inspect(args: argparse.Namespace) -> None:
+    _print_json(inspect_pilot_input(args.input_dir))
+
+
+def command_offerlab_pilot_import(args: argparse.Namespace) -> None:
+    _print_json(asdict(import_pilot(args.input_dir, data_root=args.data_root, pilot_id=args.pilot_id)))
+
+
+def command_offerlab_pilot_audit(args: argparse.Namespace) -> None:
+    _print_json(audit_pilot(args.pilot_id, data_root=args.data_root))
 
 
 def command_offerlab_models_sample(args: argparse.Namespace) -> None:
@@ -658,6 +680,28 @@ def build_parser() -> argparse.ArgumentParser:
     offer_recommend.add_argument("--data-dir", default=None)
     offer_recommend.add_argument("--config", help="Optional JSON economics config with fee, holding cost, and return risk")
     offer_recommend.set_defaults(func=command_offerlab_recommend)
+
+    offer_pilot = subparsers.add_parser("offerlab-pilot", help="Local-only seller pilot import and audit kit")
+    offer_pilot_subparsers = offer_pilot.add_subparsers(dest="offerlab_pilot_command", required=True)
+
+    offer_pilot_template = offer_pilot_subparsers.add_parser("template", help="Write seller CSV templates and an explicit column manifest")
+    offer_pilot_template.add_argument("--output-dir", help="Template output directory; defaults outside the repository")
+    offer_pilot_template.set_defaults(func=command_offerlab_pilot_template)
+
+    offer_pilot_inspect = offer_pilot_subparsers.add_parser("inspect", help="Inspect seller pilot files without importing them")
+    offer_pilot_inspect.add_argument("input_dir", metavar="INPUT_DIR")
+    offer_pilot_inspect.set_defaults(func=command_offerlab_pilot_inspect)
+
+    offer_pilot_import = offer_pilot_subparsers.add_parser("import", help="Import seller pilot files into a local external ledger")
+    offer_pilot_import.add_argument("input_dir", metavar="INPUT_DIR")
+    offer_pilot_import.add_argument("--data-root", help="External seller pilot ledger root; defaults to C:\\OfferLabData\\seller_pilots")
+    offer_pilot_import.add_argument("--pilot-id", help="Override pilot_id from the manifest")
+    offer_pilot_import.set_defaults(func=command_offerlab_pilot_import)
+
+    offer_pilot_audit = offer_pilot_subparsers.add_parser("audit", help="Audit the latest imported version for one seller pilot")
+    offer_pilot_audit.add_argument("pilot_id", metavar="PILOT_ID")
+    offer_pilot_audit.add_argument("--data-root", help="External seller pilot ledger root; defaults to C:\\OfferLabData\\seller_pilots")
+    offer_pilot_audit.set_defaults(func=command_offerlab_pilot_audit)
 
     offer_models = subparsers.add_parser("offerlab-models", help="Run research-only OfferLab model leaderboards")
     offer_models_subparsers = offer_models.add_subparsers(dest="offerlab_models_command", required=True)

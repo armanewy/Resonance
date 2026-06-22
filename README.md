@@ -217,6 +217,10 @@ python -m behavior_lab offerlab-ingest --input campaigns/campaign_002_ebay_selle
 python -m behavior_lab offerlab-audit
 python -m behavior_lab offerlab-report --output reports/offerlab_profit_audit.md
 python -m behavior_lab offerlab-recommend --input campaigns/campaign_002_ebay_seller_offers/examples/pending_offer_snapshot.json
+python -m behavior_lab offerlab-pilot template
+python -m behavior_lab offerlab-pilot inspect C:\OfferLabData\seller_pilot_drop
+python -m behavior_lab offerlab-pilot import C:\OfferLabData\seller_pilot_drop
+python -m behavior_lab offerlab-pilot audit PILOT_ID
 ```
 
 OfferLab does not call eBay or execute seller actions yet. It records normalized snapshots, produces a read-only profit audit, and abstains from recommendation when seller cost basis, fee data, traffic freshness, or comparable mature outcomes are insufficient. See [`docs/OFFERLAB.md`](docs/OFFERLAB.md).
