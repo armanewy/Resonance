@@ -110,6 +110,37 @@ class EbayApiHttpClientTests(unittest.TestCase):
         with self.assertRaisesRegex(EbayHttpClientError, "EBAY_SANDBOX_ACCESS_TOKEN"):
             EbayHttpProbeClient(sandbox=True).get("orders_read", "/sell/fulfillment/v1/order", {})
 
+    def test_dynamic_identifier_object_keys_are_not_retained(self) -> None:
+        payload = {
+            "orders": {
+                "123456789012": {
+                    "orderId": "9876543210",
+                    "buyerUserId": "synthetic-buyer-id",
+                    "total": {"value": "10.00", "currency": "USD"},
+                },
+                "buyer@example.invalid": {
+                    "status": "COMPLETE",
+                },
+            }
+        }
+        with patch(
+            "tools.ebay_api_probe.http_client.urlopen",
+            return_value=_Response(200, json.dumps(payload).encode("utf-8"), "application/json"),
+        ):
+            summary = EbayHttpProbeClient(sandbox=True).get("orders_read", "/sell/fulfillment/v1/order", {"limit": 1})
+
+        rendered = json.dumps(summary, sort_keys=True)
+        self.assertTrue(summary["identifier_field_visible"])
+        self.assertTrue(summary["pii_content_detected"])
+        self.assertNotIn("123456789012", rendered)
+        self.assertNotIn("9876543210", rendered)
+        self.assertNotIn("orderId", rendered)
+        self.assertNotIn("buyer@example.invalid", rendered)
+        self.assertNotIn("synthetic-buyer-id", rendered)
+        self.assertIn("field_key_sha256:", rendered)
+        self.assertIn("__pii_field__", summary["field_keys"])
+        self.assertIn("__identifier_field__", summary["field_keys"])
+
 
 if __name__ == "__main__":
     unittest.main()

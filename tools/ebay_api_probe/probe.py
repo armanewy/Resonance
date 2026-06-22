@@ -189,7 +189,7 @@ class EbayApiProbe:
                 "status": status,
                 "accessible": observed_result == "accessible",
                 "expected_denial": None if name == "unrelated_best_offers_probe" else False,
-                "denied_as_expected": None if name == "unrelated_best_offers_probe" else True,
+                "denied_as_expected": None if name == "unrelated_best_offers_probe" else False,
                 "observed_result": observed_result,
             }
         return matrix

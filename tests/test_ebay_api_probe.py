@@ -140,6 +140,40 @@ class EbayApiProbeTests(unittest.TestCase):
         self.assertFalse(comparison["field_matrix_comparison"]["traffic_read"]["traffic"]["sandbox"])
         self.assertTrue(comparison["field_matrix_comparison"]["traffic_read"]["traffic"]["production"])
 
+    def test_non_unrelated_denials_are_not_marked_expected(self) -> None:
+        request_names = [
+            "seller_owned_best_offers",
+            "buyer_participated_best_offers",
+            "inventory_read",
+            "orders_read",
+            "finances_read",
+            "traffic_read",
+        ]
+        for denied_name in request_names:
+            responses = {
+                "seller_owned_best_offers": {"status": 200},
+                "buyer_participated_best_offers": {"status": 200},
+                "unrelated_best_offers_probe": {"status": 403},
+                "inventory_read": {"status": 200},
+                "orders_read": {"status": 200},
+                "finances_read": {"status": 200},
+                "traffic_read": {"status": 200},
+            }
+            responses[denied_name] = {"status": 403}
+
+            report = EbayApiProbe(StaticProbeClient(responses)).run(
+                scopes=["https://api.ebay.com/oauth/api_scope"],
+                seller_owned_listing_id="a",
+                buyer_participated_listing_id="b",
+                unrelated_listing_id="c",
+            )
+
+            denied = report["permission_matrix"][denied_name]
+            self.assertEqual(denied["observed_result"], "denied")
+            self.assertFalse(denied["expected_denial"])
+            self.assertFalse(denied["denied_as_expected"])
+            self.assertIsNone(report["permission_matrix"]["unrelated_best_offers_probe"]["denied_as_expected"])
+
 
 if __name__ == "__main__":
     unittest.main()

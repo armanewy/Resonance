@@ -21,13 +21,47 @@ TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
 
 MESSAGE_KEY_FRAGMENTS = ("message", "text", "body", "description")
 PII_KEY_FRAGMENTS = ("email", "address", "street", "name", "phone", "postal", "zip")
-IDENTIFIER_KEY_FRAGMENTS = ("userid", "user_id", "buyeruserid", "selleruserid")
+IDENTIFIER_KEY_FRAGMENTS = ("userid", "user_id", "buyeruserid", "selleruserid", "orderid")
 LISTING_ID_KEY_FRAGMENTS = ("itemid", "listingid", "inventoryitemgroupkey")
 AMOUNT_FIELD_NAMES = {"price", "offerprice", "amount", "value", "convertedcurrentprice"}
 CURRENCY_FIELD_NAMES = {"currency", "currencyid", "currency_id", "@currencyid"}
 STATUS_FIELD_NAMES = {"bestofferstatus", "offerstatus", "status"}
 TYPE_FIELD_NAMES = {"bestoffertype", "offertype", "type"}
 TIME_FIELD_FRAGMENTS = ("time", "date", "timestamp")
+SAFE_FIELD_KEY_NAMES = {
+    "ack",
+    "amount",
+    "bestoffer",
+    "bestoffers",
+    "bestofferstatus",
+    "bestoffertype",
+    "bookingentry",
+    "convertedcurrentprice",
+    "currency",
+    "currencyid",
+    "errorcode",
+    "errorid",
+    "fee",
+    "feetype",
+    "impressions",
+    "lineitems",
+    "order",
+    "orders",
+    "offer",
+    "offercount",
+    "offerprice",
+    "offerstatus",
+    "price",
+    "status",
+    "timestamp",
+    "total",
+    "transaction",
+    "transactions",
+    "type",
+    "value",
+    "views",
+    "warningcode",
+}
 
 
 class EbayHttpClientError(RuntimeError):
@@ -191,11 +225,13 @@ def _response_summary(request_name: str, *, status: int, parsed: Any, transport:
     ack = _first_value(flattened, "ack")
     error_codes = sorted({str(value) for key, value in flattened if key.lower().endswith("errorcode") or key.lower() == "errorid"})
     warning_codes = sorted({str(value) for key, value in flattened if key.lower().endswith("warningcode")})
-    field_keys = sorted({key for key, _value in flattened})
+    raw_field_keys = sorted({key for key, _value in flattened})
+    field_keys = _redacted_field_keys(raw_field_keys)
     normalized_keys = {_normalize_key(key) for key in field_keys}
-    message_detected = any(_is_message_key(key) for key in field_keys)
-    pii_detected = any(_is_pii_key(key) for key in field_keys)
-    identifier_visible = any(_is_identifier_key(key) or _is_listing_id_key(key) for key in field_keys)
+    raw_normalized_keys = {_normalize_key(key) for key in raw_field_keys}
+    message_detected = any(_is_message_key(key) for key in raw_field_keys)
+    pii_detected = any(_is_pii_key(key) for key in raw_field_keys)
+    identifier_visible = any(_is_identifier_key(key) or _is_listing_id_key(key) for key in raw_field_keys)
     listing_id_hashes = sorted(
         {
             _hash_identifier(value)
@@ -212,11 +248,11 @@ def _response_summary(request_name: str, *, status: int, parsed: Any, transport:
         "warning_codes": warning_codes,
         "field_keys": field_keys,
         "offer_count": _count_offer_nodes(parsed),
-        "amount_field_visible": bool(normalized_keys & AMOUNT_FIELD_NAMES),
-        "currency_field_visible": bool(normalized_keys & CURRENCY_FIELD_NAMES),
-        "status_field_visible": bool(normalized_keys & STATUS_FIELD_NAMES),
-        "type_field_visible": bool(normalized_keys & TYPE_FIELD_NAMES),
-        "timestamp_field_visible": any(fragment in key for key in normalized_keys for fragment in TIME_FIELD_FRAGMENTS),
+        "amount_field_visible": bool(raw_normalized_keys & AMOUNT_FIELD_NAMES),
+        "currency_field_visible": bool(raw_normalized_keys & CURRENCY_FIELD_NAMES),
+        "status_field_visible": bool(raw_normalized_keys & STATUS_FIELD_NAMES),
+        "type_field_visible": bool(raw_normalized_keys & TYPE_FIELD_NAMES),
+        "timestamp_field_visible": any(fragment in key for key in raw_normalized_keys for fragment in TIME_FIELD_FRAGMENTS),
         "identifier_field_visible": identifier_visible,
         "listing_id_hashes": listing_id_hashes,
         "message_content_detected": message_detected,
@@ -234,8 +270,43 @@ def _hash_identifier(value: Any) -> str:
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
+def _hash_field_key(value: str) -> str:
+    return "field_key_sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
 def _normalize_key(key: str) -> str:
     return str(key).lower().replace("-", "").replace("_", "")
+
+
+def _redacted_field_keys(keys: list[str]) -> list[str]:
+    return sorted({_redacted_field_key(key) for key in keys})
+
+
+def _redacted_field_key(key: str) -> str:
+    normalized = _normalize_key(key)
+    if _is_message_key(key):
+        return "__message_field__"
+    if _is_pii_key(key):
+        return "__pii_field__"
+    if _is_identifier_key(key) or _is_listing_id_key(key):
+        return "__identifier_field__"
+    if normalized in SAFE_FIELD_KEY_NAMES:
+        return key
+    if _looks_like_dynamic_key(key):
+        return _hash_field_key(str(key))
+    return key
+
+
+def _looks_like_dynamic_key(key: str) -> bool:
+    text = str(key)
+    normalized = _normalize_key(text)
+    if any(character.isdigit() for character in text):
+        return True
+    if len(text) >= 16 and any(character.isalpha() for character in text) and any(character in "-_:" for character in text):
+        return True
+    if len(normalized) >= 20:
+        return True
+    return False
 
 
 def _is_message_key(key: str) -> bool:
@@ -245,7 +316,8 @@ def _is_message_key(key: str) -> bool:
 
 def _is_pii_key(key: str) -> bool:
     lowered = _normalize_key(key)
-    return any(fragment in lowered for fragment in PII_KEY_FRAGMENTS)
+    text = str(key).lower()
+    return "@" in text or any(fragment in lowered for fragment in PII_KEY_FRAGMENTS)
 
 
 def _is_identifier_key(key: str) -> bool:
