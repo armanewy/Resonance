@@ -149,6 +149,25 @@ class MoneyCanaryTests(unittest.TestCase):
                 with self.assertRaises(MoneyCanaryError):
                     manager.resume(started["canary_id"], as_of="2026-07-02T12:00:00+00:00")
 
+    def test_early_invalidation_does_not_make_final_evidence_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_name:
+            manager = MoneyCanaryManager(tmp_name)
+            started = manager.start(
+                "weather-edge-contract",
+                CanaryOptions(lab="weather_edge", as_of="2026-07-01T12:00:00+00:00"),
+            )
+
+            manager.invalidate(
+                started["canary_id"],
+                reason="audit fixture invalidation",
+                as_of="2026-07-02T12:00:00+00:00",
+            )
+            report = manager.report(started["canary_id"])
+            self.assertEqual(report["invalidated"]["reason"], "audit fixture invalidation")
+            self.assertFalse(report["metrics"]["minimum_duration_elapsed"])
+            self.assertFalse(report["final_evidence_report"]["available"])
+            self.assertFalse(report["final_evidence_report"]["real_money_allowed"])
+
     def test_offerlab_canary_requires_seller_readiness_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_name:
             manager = MoneyCanaryManager(tmp_name)

@@ -167,7 +167,7 @@ class MoneyCanaryManager:
             "counterexamples": [counterexample for item in snapshots for counterexample in item["counterexamples"]],
             "metrics": metrics,
             "final_evidence_report": {
-                "available": bool(invalidation) or metrics["minimum_duration_elapsed"] is True,
+                "available": metrics["minimum_duration_elapsed"] is True,
                 "paper_only": True,
                 "real_money_allowed": False,
                 "reason": "capital_allocation_not_authorized_in_wave_4",
