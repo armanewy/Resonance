@@ -9,6 +9,7 @@ ROLE_HYPOTHESIS_SCIENTIST = "financial_hypothesis_scientist"
 ROLE_SKEPTIC = "financial_skeptic"
 ROLE_CONNECTOR_DIAGNOSTICIAN = "connector_maintenance_diagnostician"
 ROLE_WEEKLY_ALLOCATOR = "weekly_research_allocator"
+ROLE_CONTRACT_SCOUT = "financial_contract_scout"
 
 
 class MoneyAgentError(ValueError):
@@ -213,6 +214,45 @@ class FinancialSourceScout(FinancialAgentRole):
             _require_list(candidate, "proposed_connectors")
 
 
+class FinancialContractScout(FinancialAgentRole):
+    def __init__(self) -> None:
+        super().__init__(
+            ROLE_CONTRACT_SCOUT,
+            "Financial Contract Scout",
+            (
+                "Propose paper-only financial decision contracts from genuinely different families.",
+                "Require objective resolution, a decision deadline, explicit actions, no-action alternative, computable payoff, bounded loss, and source feasibility.",
+                "Return only structured contract proposals and rejected ideas with citations.",
+                "Do not activate contracts, promote sources, allocate money, place trades, mutate seller accounts, change thresholds, or claim strategy validity.",
+            ),
+            {
+                "contract_proposals": "structured OpportunityContractProposal-compatible objects",
+                "rejections": "candidate contract families rejected before proposal with reasons",
+            },
+        )
+
+    def validate_content(self, content: dict[str, Any], context: MoneyAgentContext) -> None:
+        super().validate_content(content, context)
+        from behavior_lab.money.contract_scout import ContractValidator, OpportunityContractProposal
+
+        proposals = _require_list(content, "contract_proposals")
+        validator = ContractValidator()
+        for proposal_payload in proposals:
+            if not isinstance(proposal_payload, dict):
+                raise MoneyAgentError("contract proposal must be an object")
+            if proposal_payload.get("activation_status") not in {None, "proposed", "research_only"}:
+                raise MoneyAgentPermissionError("contract scout may not activate a contract")
+            if proposal_payload.get("money_allocation") not in {None, False, 0, "none"}:
+                raise MoneyAgentPermissionError("contract scout may not allocate money")
+            proposal = OpportunityContractProposal.from_dict(proposal_payload)
+            validation = validator.validate(proposal)
+            if proposal.paper_mode_feasibility.get("paper_only") is not True:
+                raise MoneyAgentPermissionError("contract scout may only propose paper-only contracts")
+            if "proposed_real_action" in validation.approval_required:
+                raise MoneyAgentPermissionError("contract scout may not propose real financial action")
+        _require_list(content, "rejections")
+
+
 class FinancialHypothesisScientist(FinancialAgentRole):
     allowed_hypothesis_types = {
         "forecast_revision_effect",
@@ -387,6 +427,7 @@ class WeeklyResearchAllocator(FinancialAgentRole):
 
 
 SOURCE_SCOUT = FinancialSourceScout()
+CONTRACT_SCOUT = FinancialContractScout()
 HYPOTHESIS_SCIENTIST = FinancialHypothesisScientist()
 SKEPTIC = FinancialSkeptic()
 CONNECTOR_DIAGNOSTICIAN = ConnectorMaintenanceDiagnostician()
@@ -396,6 +437,7 @@ ROLE_REGISTRY: dict[str, FinancialAgentRole] = {
     role.role_id: role
     for role in (
         SOURCE_SCOUT,
+        CONTRACT_SCOUT,
         HYPOTHESIS_SCIENTIST,
         SKEPTIC,
         CONNECTOR_DIAGNOSTICIAN,

@@ -573,6 +573,32 @@ def command_money_operations(args: argparse.Namespace) -> None:
     _print_json(payload)
 
 
+def command_money_contract_scout(args: argparse.Namespace) -> None:
+    from behavior_lab.money.contract_scout import ContractScout, load_proposals
+
+    scout = ContractScout(args.state_dir)
+    command = args.contract_scout_command
+    if command == "run":
+        payload = scout.run(
+            proposals=load_proposals(args.proposals_json) if args.proposals_json else None,
+            search_budget=args.search_budget,
+            llm_budget_usd=args.llm_budget_usd,
+            include_seed_families=not args.no_seed_families,
+        )
+    elif command == "proposals":
+        payload = scout.proposals()
+    elif command == "approve":
+        payload = scout.approve(args.proposal_id)
+    elif command == "reject":
+        payload = scout.reject(args.proposal_id, reason=args.reason)
+    elif command == "report":
+        payload = scout.report()
+    else:
+        raise SystemExit(f"unsupported contract-scout command: {command}")
+    _write_json_output(getattr(args, "output", None), payload)
+    _print_json(payload)
+
+
 def _write_json_output(output: str | None, payload: dict[str, Any]) -> None:
     if output:
         path = Path(output)
@@ -915,6 +941,37 @@ def build_parser() -> argparse.ArgumentParser:
     money_autopilot_resume.add_argument("contract_id", metavar="CONTRACT_ID")
     money_autopilot_resume.add_argument("--portfolio", default="money-lab.yaml")
     money_autopilot_resume.set_defaults(func=command_money_autopilot)
+
+    money_contract_scout = money_subparsers.add_parser("contract-scout", help="Scout paper-only financial decision contracts")
+    money_contract_scout_subparsers = money_contract_scout.add_subparsers(dest="contract_scout_command", required=True)
+
+    contract_scout_run = money_contract_scout_subparsers.add_parser("run", help="Run the autonomous paper contract scout")
+    contract_scout_run.add_argument("--state-dir", default=".money_contract_scout")
+    contract_scout_run.add_argument("--proposals-json", help="Optional structured proposal list from a bounded research agent")
+    contract_scout_run.add_argument("--search-budget", type=int, default=8)
+    contract_scout_run.add_argument("--llm-budget-usd", type=float, default=0.0)
+    contract_scout_run.add_argument("--no-seed-families", action="store_true")
+    contract_scout_run.add_argument("--output")
+    contract_scout_run.set_defaults(func=command_money_contract_scout)
+
+    for scout_command in ("proposals", "report"):
+        scout_parser = money_contract_scout_subparsers.add_parser(scout_command, help=f"Show contract scout {scout_command}")
+        scout_parser.add_argument("--state-dir", default=".money_contract_scout")
+        scout_parser.add_argument("--output")
+        scout_parser.set_defaults(func=command_money_contract_scout)
+
+    contract_scout_approve = money_contract_scout_subparsers.add_parser("approve", help="Approve an eligible proposal for experimental paper portfolio consideration")
+    contract_scout_approve.add_argument("proposal_id", metavar="PROPOSAL_ID")
+    contract_scout_approve.add_argument("--state-dir", default=".money_contract_scout")
+    contract_scout_approve.add_argument("--output")
+    contract_scout_approve.set_defaults(func=command_money_contract_scout)
+
+    contract_scout_reject = money_contract_scout_subparsers.add_parser("reject", help="Manually reject a stored contract proposal")
+    contract_scout_reject.add_argument("proposal_id", metavar="PROPOSAL_ID")
+    contract_scout_reject.add_argument("--state-dir", default=".money_contract_scout")
+    contract_scout_reject.add_argument("--reason", default="manual_rejection")
+    contract_scout_reject.add_argument("--output")
+    contract_scout_reject.set_defaults(func=command_money_contract_scout)
 
     money_canary = money_subparsers.add_parser("canary", help="Manage immutable prospective paper canaries")
     money_canary_subparsers = money_canary.add_subparsers(dest="canary_command", required=True)
