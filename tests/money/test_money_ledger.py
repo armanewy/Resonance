@@ -118,6 +118,7 @@ class MoneyLedgerTests(unittest.TestCase):
             "fees",
             "slippage",
             "shipping",
+            "taxes_or_tax_assumption_reference",
             "holding_costs",
             "return_refund_allowance",
             "research_api_cost",
@@ -125,6 +126,12 @@ class MoneyLedgerTests(unittest.TestCase):
             with self.subTest(field_name=field_name):
                 with self.assertRaises(MoneyLedgerError):
                     replace(_entry(), **{field_name: -0.01})
+        with self.assertRaises(MoneyLedgerError):
+            replace(_entry(), taxes_or_tax_assumption_reference="-0.01")
+        self.assertEqual(
+            replace(_entry(), taxes_or_tax_assumption_reference="tax_assumption_v1").taxes_or_tax_assumption_reference,
+            "tax_assumption_v1",
+        )
         with self.assertRaises(MoneyLedgerError):
             replace(_entry(), evidence_state="manually_approved_real", designation="real")
         with self.assertRaises(MoneyLedgerError):

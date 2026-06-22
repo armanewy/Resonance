@@ -132,7 +132,7 @@ class MoneyLedgerEntry:
         negative_cost_fields = [
             field_name
             for field_name in MATERIAL_ENTRY_COST_FIELDS
-            if isinstance(getattr(self, field_name), (int, float)) and float(getattr(self, field_name)) < 0
+            if _is_negative_numeric(getattr(self, field_name))
         ]
         if negative_cost_fields:
             raise MoneyLedgerError(f"cost fields may not be negative: {negative_cost_fields}")
@@ -302,3 +302,14 @@ def _validate_realized_resolution(
 def _require_nonempty(value: str, field_name: str) -> None:
     if not isinstance(value, str) or not value.strip():
         raise MoneyLedgerError(f"{field_name} must be a non-empty string")
+
+
+def _is_negative_numeric(value: Any) -> bool:
+    if isinstance(value, (int, float)):
+        return float(value) < 0
+    if isinstance(value, str):
+        try:
+            return float(value.strip()) < 0
+        except ValueError:
+            return False
+    return False
