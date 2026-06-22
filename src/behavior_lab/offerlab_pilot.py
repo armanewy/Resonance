@@ -242,6 +242,93 @@ def inspect_input(input_dir: str | Path) -> dict[str, Any]:
     }
 
 
+def onboard_input(input_dir: str | Path, *, output_path: str | Path | None = None) -> dict[str, Any]:
+    """Inspect seller exports and propose a deterministic readiness workflow.
+
+    This is intentionally local-only. LLMs are represented as a proposal-only
+    authority boundary; deterministic validation decides readiness.
+    """
+
+    source_dir = Path(input_dir)
+    if not source_dir.exists() or not source_dir.is_dir():
+        raise OfferLabPilotError(f"INPUT_DIR does not exist or is not a directory: {source_dir}")
+    manifest = _load_manifest(source_dir)
+    files = _discover_dataset_files(source_dir, manifest)
+    datasets: dict[str, Any] = {}
+    errors: list[str] = []
+    warnings: list[str] = []
+    material_ambiguities: list[dict[str, Any]] = []
+    for dataset in sorted(DATASET_FILENAMES):
+        file_path = files.get(dataset)
+        if file_path is None:
+            warning = f"{dataset}: file not found"
+            warnings.append(warning)
+            datasets[dataset] = {"present": False, "warning": warning}
+            if dataset in {"offers", "orders", "fees", "shipping_costs", "cost_basis"}:
+                material_ambiguities.append({"dataset": dataset, "reason": "missing_material_dataset"})
+            continue
+        rows, source_columns = _read_rows(file_path)
+        proposed = _propose_column_mapping(dataset, source_columns)
+        validation = _validate_mapping(dataset, source_columns, proposed)
+        errors.extend(f"{dataset}: {error}" for error in validation["errors"])
+        warnings.extend(f"{dataset}: {warning}" for warning in validation["warnings"])
+        for missing in validation["missing_required_columns"]:
+            if missing in REQUIRED_COLUMNS[dataset] or missing in {"unit_cost_amount", "fee_amount", "shipping_cost_amount"}:
+                material_ambiguities.append({"dataset": dataset, "column": missing, "reason": "missing_required_or_material_column"})
+        duplicates = _duplicate_targets(proposed)
+        for target, sources in duplicates.items():
+            material_ambiguities.append({"dataset": dataset, "column": target, "sources": sources, "reason": "ambiguous_column_mapping"})
+        datasets[dataset] = {
+            "present": True,
+            "file_name": file_path.name,
+            "format": _format_for(file_path),
+            "rows": len(rows),
+            "source_sha256": _file_sha256(file_path),
+            "source_columns": source_columns,
+            "proposed_column_mapping": proposed,
+            "deterministic_validation": validation,
+        }
+    input_inside_repo = _path_is_inside_repo(source_dir)
+    if input_inside_repo:
+        warnings.append("INPUT_DIR is inside the repository; import and onboarding can inspect but production import will refuse it")
+        material_ambiguities.append({"dataset": "all", "reason": "input_inside_repository"})
+    readiness_gate = _onboarding_readiness_gate(datasets, material_ambiguities)
+    report = {
+        "schema_version": "offerlab_seller_pilot_onboarding.v1",
+        "input_dir_name": source_dir.name,
+        "input_inside_repository": input_inside_repo,
+        "read_only": True,
+        "local_only": True,
+        "uploads_seller_data": False,
+        "executes_seller_actions": False,
+        "llm_boundary": {
+            "llm_used": False,
+            "allowed_use": "propose_column_mappings_only",
+            "deterministic_validation_controls_readiness": True,
+        },
+        "datasets": datasets,
+        "mapping_approval": {
+            "human_approval_required": bool(material_ambiguities),
+            "material_ambiguities": material_ambiguities,
+            "approval_required_only_for_material_ambiguity": True,
+        },
+        "data_readiness": {
+            "readiness_gate": readiness_gate,
+            "never_upload_seller_data": True,
+            "never_silently_impute_material_costs": True,
+            "canary_start_allowed": readiness_gate["passed"],
+        },
+        "errors": errors,
+        "warnings": warnings,
+    }
+    report["report_hash"] = stable_hash(report)
+    if output_path is not None:
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return report
+
+
 def import_pilot(input_dir: str | Path, *, data_root: str | Path | None = None, pilot_id: str | None = None) -> PilotImportResult:
     source_dir = Path(input_dir)
     if _path_is_inside_repo(source_dir):
@@ -708,6 +795,90 @@ def _mapping_for(dataset: str, source_columns: list[str], manifest: dict[str, An
         return {str(source): str(target) for source, target in columns.items()}
     canonical = set(_canonical_columns(dataset))
     return {column: column for column in source_columns if column in canonical}
+
+
+def _propose_column_mapping(dataset: str, source_columns: list[str]) -> dict[str, str]:
+    canonical = set(_canonical_columns(dataset))
+    normalized_targets = {_normalize_column_name(column): column for column in canonical}
+    mapping = {}
+    for source in source_columns:
+        normalized = _normalize_column_name(source)
+        target = normalized_targets.get(normalized) or _COLUMN_SYNONYMS.get(dataset, {}).get(normalized)
+        mapping[source] = target if target in canonical else "ignore"
+    return mapping
+
+
+_COLUMN_SYNONYMS: dict[str, dict[str, str]] = {
+    "listings": {
+        "itemid": "listing_id",
+        "item_id": "listing_id",
+        "sku": "sku",
+        "price": "asking_price_amount",
+        "askingprice": "asking_price_amount",
+        "createdat": "event_time",
+    },
+    "offers": {
+        "bestofferid": "offer_id",
+        "itemid": "listing_id",
+        "offerprice": "offer_amount",
+        "amount": "offer_amount",
+        "createdat": "event_time",
+        "respondedat": "seller_response_time",
+        "response": "seller_response",
+    },
+    "orders": {
+        "transactionid": "order_id",
+        "itemid": "listing_id",
+        "bestofferid": "offer_id",
+        "paidat": "paid_at",
+        "soldprice": "sale_price_amount",
+        "price": "sale_price_amount",
+        "status": "order_status",
+    },
+    "fees": {"transactionid": "order_id", "amount": "fee_amount", "type": "fee_type"},
+    "shipping_costs": {"transactionid": "order_id", "amount": "shipping_cost_amount", "cost": "shipping_cost_amount"},
+    "cost_basis": {"itemid": "listing_id", "sku": "sku", "cost": "unit_cost_amount", "unitcost": "unit_cost_amount"},
+    "cancellations_unpaid": {"transactionid": "order_id", "itemid": "listing_id", "amount": "amount"},
+    "returns_refunds": {"transactionid": "order_id", "itemid": "listing_id", "amount": "refund_amount"},
+    "inventory": {"itemid": "listing_id", "age": "inventory_age_days", "quantity": "quantity_available"},
+    "traffic": {"itemid": "listing_id", "pageviews": "views", "viewcount": "views"},
+}
+
+
+def _normalize_column_name(value: str) -> str:
+    return "".join(character for character in value.lower() if character.isalnum())
+
+
+def _duplicate_targets(mapping: dict[str, str]) -> dict[str, list[str]]:
+    targets: dict[str, list[str]] = defaultdict(list)
+    for source, target in mapping.items():
+        if target != "ignore":
+            targets[target].append(source)
+    return {target: sources for target, sources in targets.items() if len(sources) > 1}
+
+
+def _onboarding_readiness_gate(datasets: dict[str, Any], ambiguities: list[dict[str, Any]]) -> dict[str, Any]:
+    counts = {dataset: int(payload.get("rows", 0)) for dataset, payload in datasets.items() if payload.get("present")}
+    cost_rows = counts.get("cost_basis", 0)
+    fee_rows = counts.get("fees", 0)
+    shipping_rows = counts.get("shipping_costs", 0)
+    offer_rows = counts.get("offers", 0)
+    order_rows = counts.get("orders", 0)
+    mature_proxy = min(order_rows, fee_rows, shipping_rows, cost_rows)
+    gate = _readiness_gate(
+        mature_margin_count=mature_proxy,
+        cost_coverage=_coverage(cost_rows, max(order_rows, 1)),
+        fee_coverage=_coverage(fee_rows, max(order_rows, 1)),
+        shipping_coverage=_coverage(shipping_rows, max(order_rows, 1)),
+        decision_history_coverage=0.0 if offer_rows == 0 else 1.0,
+        return_window_coverage=1.0 if order_rows else 0.0,
+    )
+    if ambiguities:
+        gate = {**gate, "passed": False}
+        gate["checks"] = {**gate["checks"], "no_material_mapping_ambiguity": False}
+    else:
+        gate["checks"] = {**gate["checks"], "no_material_mapping_ambiguity": True}
+    return gate
 
 
 def _validate_mapping(dataset: str, source_columns: list[str], mapping: dict[str, str]) -> dict[str, Any]:

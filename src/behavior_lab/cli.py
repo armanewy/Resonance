@@ -59,6 +59,7 @@ from behavior_lab.offerlab_pilot import (
     audit_pilot,
     import_pilot,
     inspect_input as inspect_pilot_input,
+    onboard_input as onboard_pilot_input,
     shadow_report_pilot,
     write_template as write_pilot_template,
 )
@@ -283,6 +284,10 @@ def command_offerlab_pilot_template(args: argparse.Namespace) -> None:
 
 def command_offerlab_pilot_inspect(args: argparse.Namespace) -> None:
     _print_json(inspect_pilot_input(args.input_dir))
+
+
+def command_offerlab_pilot_onboard(args: argparse.Namespace) -> None:
+    _print_json(onboard_pilot_input(args.input_dir, output_path=args.output))
 
 
 def command_offerlab_pilot_import(args: argparse.Namespace) -> None:
@@ -538,6 +543,33 @@ def command_money_tournament(args: argparse.Namespace) -> None:
         workspace=args.workspace,
         generated_at=args.generated_at,
     )
+    _print_json(payload)
+
+
+def command_money_operations(args: argparse.Namespace) -> None:
+    from behavior_lab.money.operations import MoneyOperations
+
+    operations = MoneyOperations(args.state_dir)
+    command = args.operations_command
+    if command == "start":
+        payload = operations.start(
+            as_of=args.as_of,
+            seller_readiness_report=args.seller_readiness_report,
+            release_commit=args.release_commit,
+        )
+    elif command == "status":
+        payload = operations.status()
+    elif command == "doctor":
+        payload = operations.doctor()
+    elif command == "weekly-report":
+        payload = operations.weekly_report()
+    elif command == "stop":
+        payload = operations.stop()
+    elif command == "recover":
+        payload = operations.recover(as_of=args.as_of)
+    else:
+        raise SystemExit(f"unsupported operations command: {command}")
+    _write_json_output(getattr(args, "output", None), payload)
     _print_json(payload)
 
 
@@ -935,6 +967,29 @@ def build_parser() -> argparse.ArgumentParser:
     money_tournament_run.add_argument("--generated-at", default="2026-07-05T12:00:00+00:00")
     money_tournament_run.set_defaults(func=command_money_tournament)
 
+    money_operations = money_subparsers.add_parser("operations", help="Operate the frozen paper/shadow finance release")
+    money_operations_subparsers = money_operations.add_subparsers(dest="operations_command", required=True)
+
+    money_operations_start = money_operations_subparsers.add_parser("start", help="Start the frozen financial evidence release")
+    money_operations_start.add_argument("--state-dir", default=".money_operations")
+    money_operations_start.add_argument("--as-of")
+    money_operations_start.add_argument("--seller-readiness-report")
+    money_operations_start.add_argument("--release-commit")
+    money_operations_start.add_argument("--output")
+    money_operations_start.set_defaults(func=command_money_operations)
+
+    for operation_name in ("status", "doctor", "weekly-report", "stop"):
+        operation = money_operations_subparsers.add_parser(operation_name, help=f"Run money operations {operation_name}")
+        operation.add_argument("--state-dir", default=".money_operations")
+        operation.add_argument("--output")
+        operation.set_defaults(func=command_money_operations)
+
+    money_operations_recover = money_operations_subparsers.add_parser("recover", help="Recover missed paper/shadow cycles after restart")
+    money_operations_recover.add_argument("--state-dir", default=".money_operations")
+    money_operations_recover.add_argument("--as-of")
+    money_operations_recover.add_argument("--output")
+    money_operations_recover.set_defaults(func=command_money_operations)
+
     benchmark_parser = subparsers.add_parser("benchmark", help="Federated benchmark utilities")
     benchmark_subparsers = benchmark_parser.add_subparsers(dest="benchmark_command", required=True)
     benchmark_manifest = benchmark_subparsers.add_parser("validate-manifest", help="Validate a benchmark manifest JSON file")
@@ -1120,6 +1175,11 @@ def build_parser() -> argparse.ArgumentParser:
     offer_pilot_inspect = offer_pilot_subparsers.add_parser("inspect", help="Inspect seller pilot files without importing them")
     offer_pilot_inspect.add_argument("input_dir", metavar="INPUT_DIR")
     offer_pilot_inspect.set_defaults(func=command_offerlab_pilot_inspect)
+
+    offer_pilot_onboard = offer_pilot_subparsers.add_parser("onboard", help="Guide local seller export mapping and readiness checks")
+    offer_pilot_onboard.add_argument("input_dir", metavar="INPUT_DIR")
+    offer_pilot_onboard.add_argument("--output", help="Optional JSON output path for the data-readiness report")
+    offer_pilot_onboard.set_defaults(func=command_offerlab_pilot_onboard)
 
     offer_pilot_import = offer_pilot_subparsers.add_parser("import", help="Import seller pilot files into a local external ledger")
     offer_pilot_import.add_argument("input_dir", metavar="INPUT_DIR")
