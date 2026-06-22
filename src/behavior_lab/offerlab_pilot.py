@@ -426,15 +426,14 @@ def audit_pilot(pilot_id: str, *, data_root: str | Path | None = None) -> dict[s
         if not mature:
             incomplete_outcomes.append(str(order["order_id"]))
             continue
-        if cost is None or fee is None:
+        if cost is None or fee is None or shipping is None:
             continue
         sale_price = _float_or_none(order.get("sale_price_amount"))
         if sale_price is None:
             continue
         quantity = int(order.get("quantity") or 1)
         refund = refunds_by_order.get(str(order["order_id"]), 0.0)
-        ship = shipping or 0.0
-        margin = sale_price - fee - ship - refund - (cost * quantity)
+        margin = sale_price - fee - shipping - refund - (cost * quantity)
         asking = _float_or_none(listing.get("asking_price_amount")) if listing else None
         margin_rows.append(
             {
@@ -460,6 +459,7 @@ def audit_pilot(pilot_id: str, *, data_root: str | Path | None = None) -> dict[s
         mature_margin_count=len(margin_rows),
         cost_coverage=_coverage(len(orders) - len(set(missing_cost_basis)), len(orders)),
         fee_coverage=_coverage(len(orders) - len(set(missing_fee)), len(orders)),
+        shipping_coverage=_coverage(len(orders) - len(set(missing_shipping)), len(orders)),
         decision_history_coverage=_coverage(decision_history_known, len(offers)),
         return_window_coverage=_coverage(sum(1 for order in completed_orders if _return_window_matured(order, returns)), len(completed_orders)),
     )
@@ -538,10 +538,11 @@ def shadow_report_pilot(pilot_id: str, *, data_root: str | Path | None = None, o
     completeness = {
         "counts": audit["counts"],
         "readiness_gate": audit["readiness_gate"],
-        "cost_coverage": audit["readiness_gate"]["observed"]["cost_coverage"],
-        "fee_coverage": audit["readiness_gate"]["observed"]["fee_coverage"],
-        "decision_history_coverage": audit["readiness_gate"]["observed"]["decision_history_coverage"],
-        "return_window_coverage": audit["readiness_gate"]["observed"]["return_window_coverage"],
+            "cost_coverage": audit["readiness_gate"]["observed"]["cost_coverage"],
+            "fee_coverage": audit["readiness_gate"]["observed"]["fee_coverage"],
+            "shipping_coverage": audit["readiness_gate"]["observed"]["shipping_coverage"],
+            "decision_history_coverage": audit["readiness_gate"]["observed"]["decision_history_coverage"],
+            "return_window_coverage": audit["readiness_gate"]["observed"]["return_window_coverage"],
         "mature_margin_outcomes": audit["readiness_gate"]["observed"]["mature_margin_outcomes"],
         "meaningful_available_actions": meaningful_actions,
         "meaningful_action_count": len(meaningful_actions),
@@ -564,7 +565,7 @@ def shadow_report_pilot(pilot_id: str, *, data_root: str | Path | None = None, o
             "mature_contribution_margin": audit["mature_contribution_margin"],
             "realized_price_vs_asking": audit["realized_price_vs_asking"],
             "cancellation_return_effects": audit["cancellation_return_effects"],
-            "data_quality_gaps": audit["data_quality_gaps"],
+            "data_quality_gaps": _shadow_data_quality_gaps(audit["data_quality_gaps"]),
         },
         "mature_margin_by_decision_type": decision_breakdown,
         "historical_policy_comparison": {
@@ -911,6 +912,7 @@ def _readiness_gate(
     mature_margin_count: int,
     cost_coverage: float,
     fee_coverage: float,
+    shipping_coverage: float,
     decision_history_coverage: float,
     return_window_coverage: float,
 ) -> dict[str, Any]:
@@ -918,6 +920,7 @@ def _readiness_gate(
         "minimum_mature_margin_outcomes": 30,
         "minimum_cost_coverage": 0.95,
         "minimum_fee_coverage": 0.95,
+        "minimum_shipping_coverage": 0.95,
         "minimum_decision_history_coverage": 0.8,
         "minimum_return_window_coverage": 0.8,
     }
@@ -925,6 +928,7 @@ def _readiness_gate(
         "sufficient_mature_outcomes": mature_margin_count >= thresholds["minimum_mature_margin_outcomes"],
         "cost_coverage": cost_coverage >= thresholds["minimum_cost_coverage"],
         "fee_coverage": fee_coverage >= thresholds["minimum_fee_coverage"],
+        "shipping_coverage": shipping_coverage >= thresholds["minimum_shipping_coverage"],
         "decision_history_coverage": decision_history_coverage >= thresholds["minimum_decision_history_coverage"],
         "return_window_coverage": return_window_coverage >= thresholds["minimum_return_window_coverage"],
     }
@@ -935,6 +939,7 @@ def _readiness_gate(
             "mature_margin_outcomes": mature_margin_count,
             "cost_coverage": cost_coverage,
             "fee_coverage": fee_coverage,
+            "shipping_coverage": shipping_coverage,
             "decision_history_coverage": decision_history_coverage,
             "return_window_coverage": return_window_coverage,
         },
@@ -1002,7 +1007,8 @@ def _decision_margin_rows(by_dataset: dict[str, list[dict[str, Any]]]) -> list[d
         order_id = str(order.get("order_id"))
         cost = cost_by_listing.get(listing_id)
         fee = fees_by_order.get(order_id)
-        if cost is None or fee is None:
+        shipping = shipping_by_order.get(order_id)
+        if cost is None or fee is None or shipping is None:
             continue
         sale_price = _float_or_none(order.get("sale_price_amount"))
         if sale_price is None:
@@ -1013,7 +1019,6 @@ def _decision_margin_rows(by_dataset: dict[str, list[dict[str, Any]]]) -> list[d
             offer = listing_offers[0] if len(listing_offers) == 1 else {}
         quantity = int(order.get("quantity") or 1)
         refund = refunds_by_order.get(order_id, 0.0)
-        shipping = shipping_by_order.get(order_id, 0.0)
         margin = sale_price - fee - shipping - refund - (cost * quantity)
         listing = listings.get(listing_id, {})
         asking = _float_or_none(listing.get("asking_price_amount"))
@@ -1089,12 +1094,34 @@ def _shadow_abstention_reasons(completeness: dict[str, Any], gate: dict[str, Any
         "sufficient_mature_outcomes": "not enough mature buyer-initiated offer outcomes",
         "cost_coverage": "cost-basis coverage is below threshold",
         "fee_coverage": "fee coverage is below threshold",
+        "shipping_coverage": "shipping-cost coverage is below threshold",
         "decision_history_coverage": "decision-history coverage is below threshold",
         "return_window_coverage": "return-window maturity coverage is below threshold",
         "at_least_two_meaningful_actions": "fewer than two meaningful seller actions are observed often enough",
         "minimum_commercial_sample": "commercial sample is too small for a shadow policy",
     }
     return [labels.get(name, name) for name, passed in gate["checks"].items() if not passed]
+
+
+def _shadow_data_quality_gaps(gaps: dict[str, Any]) -> dict[str, Any]:
+    identifier_keys = {
+        "missing_cost_basis_listing_ids",
+        "orders_missing_actual_fees",
+        "orders_missing_shipping_costs",
+        "incomplete_outcome_order_ids",
+    }
+    output: dict[str, Any] = {"never_imputed_costs": bool(gaps.get("never_imputed_costs", False))}
+    for key in sorted(identifier_keys):
+        values = [str(value) for value in gaps.get(key, [])]
+        output[key] = {
+            "count": len(values),
+            "sample_hashes": [stable_hash(value) for value in values[:25]],
+        }
+    for key, value in gaps.items():
+        if key not in identifier_keys and key != "never_imputed_costs":
+            output[key] = value
+    output["raw_identifiers_redacted"] = True
+    return output
 
 
 def _candidate_shadow_policy(decision_breakdown: list[dict[str, Any]], meaningful_actions: list[str]) -> dict[str, Any] | None:

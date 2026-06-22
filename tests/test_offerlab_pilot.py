@@ -253,6 +253,40 @@ class OfferLabPilotTests(unittest.TestCase):
             self.assertEqual(report["report_hash"], persisted["report_hash"])
             self.assertFalse(persisted["executes_seller_actions"])
 
+    def test_shadow_report_redacts_gap_identifiers(self) -> None:
+        with tempfile.TemporaryDirectory() as input_tmp, tempfile.TemporaryDirectory() as data_tmp:
+            source = Path(input_tmp)
+            _pilot_files(source, omit_last_cost=True)
+            import_pilot(source, data_root=data_tmp, pilot_id="shadow_redaction")
+            output = Path(data_tmp) / "shadow_redacted.json"
+
+            report = shadow_report_pilot("shadow_redaction", data_root=data_tmp, output_path=output)
+            rendered = json.dumps(report, sort_keys=True) + output.read_text(encoding="utf-8")
+
+            self.assertTrue(report["profit_and_loss_reconstruction"]["data_quality_gaps"]["raw_identifiers_redacted"])
+            self.assertNotIn("listing_029", rendered)
+            self.assertNotIn("order_029", rendered)
+            self.assertGreater(report["profit_and_loss_reconstruction"]["data_quality_gaps"]["missing_cost_basis_listing_ids"]["count"], 0)
+
+    def test_missing_shipping_is_not_imputed_into_margin_or_shadow_report(self) -> None:
+        with tempfile.TemporaryDirectory() as input_tmp, tempfile.TemporaryDirectory() as data_tmp:
+            source = Path(input_tmp)
+            _pilot_files(source)
+            (source / "shipping_costs.csv").write_text(
+                "shipping_id,order_id,event_time,available_at,shipping_cost_amount,currency\n",
+                encoding="utf-8",
+            )
+            import_pilot(source, data_root=data_tmp, pilot_id="missing_shipping")
+
+            audit = audit_pilot("missing_shipping", data_root=data_tmp)
+            report = shadow_report_pilot("missing_shipping", data_root=data_tmp)
+
+            self.assertEqual(audit["mature_contribution_margin"]["orders"], 0)
+            self.assertFalse(audit["readiness_gate"]["passed"])
+            self.assertFalse(audit["readiness_gate"]["checks"]["shipping_coverage"])
+            self.assertEqual(report["mature_margin_by_decision_type"], [])
+            self.assertIn("shipping-cost coverage", " ".join(report["shadow_recommendations"]["reasons"]))
+
     def test_import_rejects_bad_currency(self) -> None:
         with tempfile.TemporaryDirectory() as input_tmp, tempfile.TemporaryDirectory() as data_tmp:
             source = Path(input_tmp)
