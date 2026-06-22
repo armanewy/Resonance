@@ -94,6 +94,54 @@ class OfferLabBenchmarkV2IntegrationTests(unittest.TestCase):
             self.assertFalse(report["full_release_evidence"]["passed"])
             self.assertIn("audited_full_release_evidence_failed", " ".join(report["errors"]))
 
+    def test_preregistration_hash_is_stable_across_repeat_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            normalized = _write_normalized(root / "normalized")
+            _mark_as_bounded_fixture(normalized)
+            tokens = root / "v1_tokens.json"
+            tokens.write_text(json.dumps({"tokens": ["external-v1-token"]}), encoding="utf-8")
+
+            first = run_offerlab_benchmark_v2_integration(
+                BenchmarkV2IntegrationPaths(
+                    normalized_dir=normalized,
+                    benchmark_dir=root / "benchmark_v2",
+                    output_path=root / "reports" / "v2_first.json",
+                    preregistration_path=root / "reports" / "preregistration_first.json",
+                    pre_hidden_output_path=root / "reports" / "pre_hidden_first.json",
+                    doc_path=root / "docs" / "v2_first.md",
+                    pre_hidden_doc_path=root / "docs" / "pre_hidden_first.md",
+                    model_cards_dir=root / "cards_first",
+                    external_v1_hidden_tokens_path=tokens,
+                ),
+                batch_size=2,
+                partition_rows=3,
+                allow_bounded_test_input=True,
+            )
+            second = run_offerlab_benchmark_v2_integration(
+                BenchmarkV2IntegrationPaths(
+                    normalized_dir=normalized,
+                    benchmark_dir=root / "benchmark_v2",
+                    output_path=root / "reports" / "v2_second.json",
+                    preregistration_path=root / "reports" / "preregistration_second.json",
+                    pre_hidden_output_path=root / "reports" / "pre_hidden_second.json",
+                    doc_path=root / "docs" / "v2_second.md",
+                    pre_hidden_doc_path=root / "docs" / "pre_hidden_second.md",
+                    model_cards_dir=root / "cards_second",
+                    external_v1_hidden_tokens_path=tokens,
+                ),
+                batch_size=2,
+                partition_rows=3,
+                allow_bounded_test_input=True,
+            )
+
+            self.assertEqual(first["preregistration"]["hash"], second["preregistration"]["hash"])
+            first_prereg = json.loads((root / "reports" / "preregistration_first.json").read_text(encoding="utf-8"))
+            second_prereg = json.loads((root / "reports" / "preregistration_second.json").read_text(encoding="utf-8"))
+            self.assertNotEqual(first_prereg["generated_at"], second_prereg["generated_at"])
+            self.assertEqual(first_prereg["preregistration_hash"], second_prereg["preregistration_hash"])
+            self.assertEqual(first_prereg["candidate_family_hash"], second_prereg["candidate_family_hash"])
+
     def test_cli_benchmark_v2_integrate_smoke(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

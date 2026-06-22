@@ -183,6 +183,7 @@ def _preregistration_artifact(
             artifact["artifact_hash"] = stable_hash(artifact)
             targets[target] = artifact
     fresh_hidden = (build_report or {}).get("fresh_hidden_lockbox", {})
+    build_preregistration_summary = _build_preregistration_summary(build_report)
     artifact = {
         "schema_version": "offerlab_benchmark_v2_preregistration.v1",
         "benchmark_id": "offerlab_benchmark_v2",
@@ -192,7 +193,7 @@ def _preregistration_artifact(
         "hidden_results_used_for_selection": False,
         "submit_hidden_requested": submit_hidden_requested,
         "full_release_evidence_passed": full_release_evidence["passed"],
-        "build_manifest_hash": (build_report or {}).get("manifest_hash"),
+        "build_artifact_hash": stable_hash(build_preregistration_summary),
         "pre_hidden_report_hash": stable_hash(_pre_hidden_summary(pre_hidden)) if pre_hidden else None,
         "fresh_hidden_lockbox_hashes": {
             target: payload.get("manifest_hash")
@@ -202,7 +203,19 @@ def _preregistration_artifact(
         "targets": targets,
     }
     artifact["candidate_family_hash"] = stable_hash(targets)
-    artifact["preregistration_hash"] = stable_hash(artifact)
+    frozen_payload = {
+        "schema_version": artifact["schema_version"],
+        "benchmark_id": artifact["benchmark_id"],
+        "full_release_evidence_passed": artifact["full_release_evidence_passed"],
+        "build_artifact_hash": artifact["build_artifact_hash"],
+        "pre_hidden_report_hash": artifact["pre_hidden_report_hash"],
+        "fresh_hidden_lockbox_hashes": artifact["fresh_hidden_lockbox_hashes"],
+        "candidate_family_hash": artifact["candidate_family_hash"],
+        "targets": targets,
+        "hidden_results_used_for_selection": False,
+    }
+    artifact["frozen_payload_hash"] = stable_hash(frozen_payload)
+    artifact["preregistration_hash"] = artifact["frozen_payload_hash"]
     return artifact
 
 
@@ -323,20 +336,44 @@ def _build_summary(build_report: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
-def _pre_hidden_summary(pre_hidden: dict[str, Any] | None) -> dict[str, Any]:
-    if pre_hidden is None:
+def _build_preregistration_summary(build_report: dict[str, Any] | None) -> dict[str, Any]:
+    if build_report is None:
         return {"completed": False}
     return {
         "completed": True,
-        "report_hash": stable_hash(pre_hidden),
+        "benchmark_id": build_report.get("benchmark_id"),
+        "protocol_hash": build_report.get("protocol", {}).get("hash"),
+        "normalization_manifest_hash": build_report.get("normalization", {}).get("normalization_manifest_hash"),
+        "task_manifests": build_report.get("task_manifests", {}),
+        "fresh_hidden_lockbox_hashes": {
+            target: payload.get("manifest_hash")
+            for target, payload in build_report.get("fresh_hidden_lockbox", {}).items()
+            if isinstance(payload, dict)
+        },
+    }
+
+
+def _pre_hidden_summary(pre_hidden: dict[str, Any] | None) -> dict[str, Any]:
+    if pre_hidden is None:
+        return {"completed": False}
+    selected = {
+        target: {
+            "model_id": payload.get("selected_model", {}).get("model_id"),
+            "artifact_id": payload.get("selected_model", {}).get("artifact_id"),
+            "selection_split": payload.get("selected_model", {}).get("selection_split"),
+            "selection_metric": payload.get("selected_model", {}).get("selection_metric"),
+        }
+        for target, payload in pre_hidden.get("targets", {}).items()
+    }
+    summary = {
+        "completed": True,
         "gate": pre_hidden.get("gate", {}),
         "pre_hidden_readiness": pre_hidden.get("pre_hidden_readiness", {}),
         "hidden_submission_performed": pre_hidden.get("hidden_submission_performed"),
-        "selected_models": {
-            target: payload.get("selected_model", {}).get("model_id")
-            for target, payload in pre_hidden.get("targets", {}).items()
-        },
+        "selected_models": selected,
     }
+    summary["report_hash"] = stable_hash(summary)
+    return summary
 
 
 def _full_release_evidence_summary(manifest: dict[str, Any]) -> dict[str, Any]:
