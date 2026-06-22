@@ -268,27 +268,9 @@ def command_offerlab_models_sample(args: argparse.Namespace) -> None:
 
 
 def command_offerlab_models_benchmark_v1(args: argparse.Namespace) -> None:
-    final_manifest = Path("reports/offerlab_benchmark_v1_final_manifest.json")
-    if final_manifest.exists():
-        manifest = json.loads(final_manifest.read_text(encoding="utf-8"))
-        if manifest.get("hidden_status") == "hidden_spent":
-            raise SystemExit(
-                "OfferLab Benchmark v1 is frozen and hidden-spent. "
-                "Do not rerun it; create Benchmark v2 with fresh hidden cases instead."
-            )
-    _print_json(
-        run_offerlab_benchmark_v1(
-            BenchmarkPaths(
-                normalized_dir=Path(args.normalized_dir),
-                output_path=Path(args.output),
-                doc_path=Path(args.doc),
-                model_cards_dir=Path(args.model_cards_dir),
-                protocol_path=Path(args.protocol),
-                lockbox_store_path=Path(args.lockbox_store) if args.lockbox_store else None,
-            ),
-            row_cap=args.row_cap,
-            seed=args.seed,
-        )
+    raise SystemExit(
+        "OfferLab Benchmark v1 is frozen and hidden-spent. "
+        "Do not rerun it; create Benchmark v2 with fresh hidden cases instead."
     )
 
 

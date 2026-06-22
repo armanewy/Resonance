@@ -33,6 +33,18 @@ def validate_v2_hidden_exclusion(
     """Validate that a proposed v2 hidden set cannot reuse v1 hidden cases."""
 
     hidden_policy = v2_manifest.get("hidden_policy", {})
+    required_policy = {
+        "fresh_hidden_lockbox_required",
+        "exclude_all_v1_hidden_case_tokens",
+        "external_v1_hidden_case_token_artifact_required_if_manifest_tokens_unavailable",
+        "block_hidden_creation_if_v1_tokens_unavailable",
+        "exclude_v1_hidden_case_tokens_before_sampling",
+    }
+    missing_or_false = sorted(name for name in required_policy if hidden_policy.get(name) is not True)
+    if missing_or_false:
+        raise V2ProtocolError(f"Benchmark v2 hidden policy is not fail-closed: {', '.join(missing_or_false)}")
+    if hidden_policy.get("protocol_changes_after_hidden_access_allowed") is not False:
+        raise V2ProtocolError("Benchmark v2 must forbid protocol changes after hidden access")
     if not hidden_policy.get("exclude_all_v1_hidden_case_tokens", False):
         raise V2ProtocolError("Benchmark v2 must require exclusion of all v1 hidden case tokens")
 
@@ -56,7 +68,7 @@ def validate_v2_hidden_exclusion(
     }
     exclusion_tokens = manifest_tokens | external_tokens
 
-    if not exclusion_tokens and hidden_policy.get("block_hidden_creation_if_v1_tokens_unavailable", False):
+    if not exclusion_tokens:
         raise V2ProtocolError(
             "v1 hidden exclusion tokens are unavailable; v2 hidden creation must remain blocked"
         )
@@ -94,10 +106,16 @@ def validate_v2_pre_hidden_readiness(
 def _validate_split_specs(v2_manifest: dict[str, Any], readiness_report: dict[str, Any]) -> None:
     expected = {split["name"]: split for split in v2_manifest.get("splits", [])}
     observed = readiness_report.get("splits", {})
+    if set(observed) != set(expected):
+        raise V2ProtocolError("readiness split names do not exactly match v2 manifest")
+    allowed_extra_keys = {"passed", "manifest_hash", "row_counts_hash", "case_set_hash", "purged_rows"}
     for name, expected_spec in expected.items():
         actual = observed.get(name)
         if not isinstance(actual, dict):
             raise V2ProtocolError(f"missing v2 split report: {name}")
+        extra_keys = set(actual) - set(expected_spec) - allowed_extra_keys
+        if extra_keys:
+            raise V2ProtocolError(f"split {name} includes unregistered fields: {', '.join(sorted(extra_keys))}")
         for key, expected_value in expected_spec.items():
             if actual.get(key) != expected_value:
                 raise V2ProtocolError(f"split {name} does not match required {key}")
@@ -131,6 +149,9 @@ def _validate_negative_controls(v2_manifest: dict[str, Any], readiness_report: d
             raise V2ProtocolError(f"missing negative control report: {name}")
         if actual.get("executed") is not True or actual.get("passed") is not True:
             raise V2ProtocolError(f"negative control did not pass: {name}")
+        expected_gate = gates.get(name, {}).get("pass_condition")
+        if actual.get("pass_condition") != expected_gate:
+            raise V2ProtocolError(f"negative control pass condition mismatch: {name}")
 
 
 def _validate_calibration(v2_manifest: dict[str, Any], readiness_report: dict[str, Any]) -> None:
@@ -149,8 +170,23 @@ def _validate_calibration(v2_manifest: dict[str, Any], readiness_report: dict[st
                 raise V2ProtocolError(f"wrong ECE definition for {target}")
             if report.get("expected_calibration_error", 1.0) > classification_spec.get("expected_calibration_error_max", 0.0):
                 raise V2ProtocolError(f"ECE threshold failed for {target}")
+            if report.get("reliability_bin_count", 0) < classification_spec.get("minimum_reliability_bin_count", 0):
+                raise V2ProtocolError(f"not enough reliability bins for {target}")
             if report.get("nonempty_reliability_bins", 0) < classification_spec.get("minimum_nonempty_reliability_bins", 0):
                 raise V2ProtocolError(f"not enough reliability bins for {target}")
+            if report.get("classwise_ece_definition") != classification_spec.get("classwise_ece_definition"):
+                raise V2ProtocolError(f"wrong classwise ECE definition for {target}")
+            classwise = report.get("classwise_expected_calibration_error", {})
+            if not isinstance(classwise, dict) or not classwise:
+                raise V2ProtocolError(f"missing classwise calibration for {target}")
+            for class_name, ece in classwise.items():
+                if ece > classification_spec.get("classwise_expected_calibration_error_max", 0.0):
+                    raise V2ProtocolError(f"classwise calibration threshold failed for {target}: {class_name}")
+            class_rows = report.get("class_row_counts", {})
+            if not isinstance(class_rows, dict) or not class_rows:
+                raise V2ProtocolError(f"missing class row counts for {target}")
+            if any(count < classification_spec.get("minimum_rows_per_reported_class", 0) for count in class_rows.values()):
+                raise V2ProtocolError(f"class row support threshold failed for {target}")
             if report.get("macro_classwise_expected_calibration_error", 1.0) > classification_spec.get("macro_classwise_expected_calibration_error_max", 0.0):
                 raise V2ProtocolError(f"classwise calibration threshold failed for {target}")
         else:
@@ -158,8 +194,12 @@ def _validate_calibration(v2_manifest: dict[str, Any], readiness_report: dict[st
                 raise V2ProtocolError(f"wrong interval coverage target for {target}")
             if report.get("central_interval_absolute_error", 1.0) > regression_spec.get("central_interval_allowed_absolute_error", 0.0):
                 raise V2ProtocolError(f"interval calibration threshold failed for {target}")
+            if report.get("interval_width_to_median_target_iqr", float("inf")) > regression_spec.get("maximum_interval_width_to_median_target_iqr", 0.0):
+                raise V2ProtocolError(f"interval width threshold failed for {target}")
             if report.get("quantile_levels") != regression_spec.get("quantile_levels"):
                 raise V2ProtocolError(f"wrong quantile levels for {target}")
+            if report.get("quantile_pinball_loss_ratio_to_median_baseline", float("inf")) > regression_spec.get("maximum_quantile_pinball_loss_ratio_to_median_baseline", 0.0):
+                raise V2ProtocolError(f"quantile loss threshold failed for {target}")
 
 
 def _validate_model_selection(v2_manifest: dict[str, Any], readiness_report: dict[str, Any]) -> None:

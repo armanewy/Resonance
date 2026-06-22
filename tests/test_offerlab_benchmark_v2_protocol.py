@@ -221,6 +221,33 @@ class OfferLabBenchmarkV2ProtocolTests(unittest.TestCase):
                 ]
             )
 
+    def test_cli_benchmark_v1_is_retired_from_any_current_directory(self) -> None:
+        original = Path.cwd()
+        try:
+            import os
+            import tempfile
+
+            with tempfile.TemporaryDirectory() as tmp:
+                os.chdir(tmp)
+                try:
+                    with self.assertRaisesRegex(SystemExit, "Benchmark v1 is frozen and hidden-spent"):
+                        cli_main(
+                            [
+                                "offerlab-models",
+                                "benchmark-v1",
+                                "--normalized-dir",
+                                "does-not-matter",
+                                "--lockbox-store",
+                                "outside-repo.jsonl",
+                            ]
+                        )
+                finally:
+                    os.chdir(original)
+        finally:
+            import os
+
+            os.chdir(original)
+
 
 def _valid_v2_readiness_report(manifest: dict) -> dict:
     splits = {}
@@ -239,7 +266,11 @@ def _valid_v2_readiness_report(manifest: dict) -> dict:
         }
 
     negative_controls = {
-        name: {"executed": True, "passed": True}
+        name: {
+            "executed": True,
+            "passed": True,
+            "pass_condition": manifest["negative_control_gates"][name]["pass_condition"],
+        }
         for name in manifest["negative_controls"]
     }
 
@@ -251,8 +282,12 @@ def _valid_v2_readiness_report(manifest: dict) -> dict:
             calibration[target] = {
                 "ece_definition": manifest["calibration_acceptance"]["classification"]["ece_definition"],
                 "expected_calibration_error": 0.03,
+                "reliability_bin_count": 10,
                 "nonempty_reliability_bins": 6,
+                "classwise_ece_definition": manifest["calibration_acceptance"]["classification"]["classwise_ece_definition"],
+                "classwise_expected_calibration_error": {"accept": 0.04, "counter": 0.05, "decline": 0.04},
                 "macro_classwise_expected_calibration_error": 0.05,
+                "class_row_counts": {"accept": 30, "counter": 30, "decline": 30},
             }
             selection = {
                 "relative_improvement": objective.get("minimum_relative_improvement", 0.05),
@@ -261,7 +296,9 @@ def _valid_v2_readiness_report(manifest: dict) -> dict:
             calibration[target] = {
                 "central_interval_nominal_coverage": manifest["calibration_acceptance"]["regression"]["central_interval_nominal_coverage"],
                 "central_interval_absolute_error": 0.03,
+                "interval_width_to_median_target_iqr": 2.0,
                 "quantile_levels": manifest["calibration_acceptance"]["regression"]["quantile_levels"],
+                "quantile_pinball_loss_ratio_to_median_baseline": 0.9,
             }
             selection = {
                 "error_ratio_to_baseline": objective.get("maximum_error_ratio_to_baseline", 0.98),
