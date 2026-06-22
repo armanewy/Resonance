@@ -352,8 +352,9 @@ class MoneyAutopilot:
             value = float(item.get("realized_net_value") or item.get("paper_realized_net_value") or 0.0)
             by_contract[item["contract_id"]] = round(by_contract.get(item["contract_id"], 0.0) + value, 2)
             by_strategy[str(item.get("strategy_id", "fixture"))] = round(by_strategy.get(str(item.get("strategy_id", "fixture")), 0.0) + value, 2)
-            by_source[str(item.get("source_id", item.get("lab", "unknown")))] = round(
-                by_source.get(str(item.get("source_id", item.get("lab", "unknown"))), 0.0) + value,
+            source_key = str(_redact_secrets(str(item.get("source_id", item.get("lab", "unknown")))))
+            by_source[source_key] = round(
+                by_source.get(source_key, 0.0) + value,
                 2,
             )
         for item in decisions:
@@ -363,8 +364,9 @@ class MoneyAutopilot:
                 prospective_by_strategy.get(str(item.get("strategy_id", "fixture")), 0.0) + value,
                 2,
             )
-            prospective_by_source[str(item.get("source_id", item.get("lab", "unknown")))] = round(
-                prospective_by_source.get(str(item.get("source_id", item.get("lab", "unknown"))), 0.0) + value,
+            source_key = str(_redact_secrets(str(item.get("source_id", item.get("lab", "unknown")))))
+            prospective_by_source[source_key] = round(
+                prospective_by_source.get(source_key, 0.0) + value,
                 2,
             )
             capital += float(item.get("capital_required") or 0.0)
@@ -704,12 +706,12 @@ class MoneyAutopilot:
         )[:24]
 
     def _base_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return {
+        return _redact_secrets({
             "schema_version": AUTOPILOT_SCHEMA_VERSION,
             "portfolio_id": self.portfolio.portfolio_id,
             "portfolio_hash": self.portfolio.portfolio_hash(),
             **payload,
-        }
+        })
 
     def _events(self, event_type: str) -> list[dict[str, Any]]:
         return [event for event in self.store.all_events() if event.get("event_type") == event_type]
@@ -1012,24 +1014,35 @@ def _redact_secrets(value: Any) -> Any:
         output: dict[str, Any] = {}
         for key, child in value.items():
             key_text = str(key).lower()
+            redacted_key = _redact_secret_text(str(key))
             if any(marker in key_text for marker in SECRET_KEY_MARKERS):
-                output[key] = "[REDACTED]"
+                output[redacted_key] = "[REDACTED]"
             else:
-                output[key] = _redact_secrets(child)
+                output[redacted_key] = _redact_secrets(child)
         return output
     if isinstance(value, list):
         return [_redact_secrets(item) for item in value]
     if not isinstance(value, str):
         return value
+    return _redact_secret_text(value)
+
+
+def _redact_secret_text(value: str) -> str:
     lowered = value.lower()
     if any(marker in lowered for marker in SECRET_VALUE_MARKERS):
         return "[REDACTED]"
     if re.search(r"(?i)(auth|authorization|bearer|credential|key|password|secret|session|sig|signature|token)=", value):
-        return re.sub(
+        value = re.sub(
             r"(?i)((?:[?&]|^)(?:api[_-]?key|auth|authorization|credential|credentials|key|map[_-]?key|password|secret|session|sig|signature|token|access[_-]?token)=)[^&\s]+",
             r"\1[REDACTED]",
             value,
         )
+    value = re.sub(
+        r"(?i)((?:authorization|auth|api[_-]?key|x-api-key|token)\s*:\s*(?:bearer\s+)?)[^\s,;]+",
+        r"\1[REDACTED]",
+        value,
+    )
+    value = re.sub(r"(?i)(bearer\s+)[^\s,;]+", r"\1[REDACTED]", value)
     return value
 
 

@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 TESTS = ROOT / "tests"
@@ -54,6 +55,30 @@ def _write_portfolio(
         encoding="utf-8",
     )
     return path
+
+
+def _decision(**overrides: object) -> dict[str, object]:
+    decision: dict[str, object] = {
+        "contract_id": "weather",
+        "lab": "weather_edge",
+        "selected_action": "buy_yes",
+        "capital_required": 1.0,
+        "maximum_possible_loss": 1.0,
+        "conservative_expected_net_value": 2.0,
+        "decision_id": "audit-decision",
+        "strategy_id": "audit-strategy",
+        "source_id": "audit-source",
+        "seller_shadow_value": 0.0,
+        "paper_only": True,
+        "unknown_cost_basis_count": 0,
+        "material_costs_known": True,
+        "forecast_current": True,
+        "liquidity_capacity_ok": True,
+        "deadline_open": True,
+        "action_mode": "reactive",
+    }
+    decision.update(overrides)
+    return decision
 
 
 class MoneyAutopilotAuditRegressionTests(unittest.TestCase):
@@ -241,6 +266,36 @@ contracts:
             )
             autopilot = MoneyAutopilot.from_path(path)
             autopilot.run_once()
+
+            store_text = (tmp / "state" / "audit-money-lab" / "autopilot.jsonl").read_text(encoding="utf-8")
+            self.assertNotIn(secret, store_text)
+
+    def test_secret_bearing_decision_source_id_is_not_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
+            secret = "SOURCE_AUTH_SECRET_456"
+            autopilot = MoneyAutopilot.from_path(_write_portfolio(tmp))
+            with patch.object(
+                MoneyAutopilot,
+                "_run_weather_decision",
+                return_value=_decision(source_id=f"vendor_feed?auth={secret}"),
+            ):
+                autopilot.run_once()
+
+            store_text = (tmp / "state" / "audit-money-lab" / "autopilot.jsonl").read_text(encoding="utf-8")
+            self.assertNotIn(secret, store_text)
+
+    def test_bearer_credentials_in_failure_messages_are_not_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
+            secret = "BEARER_SECRET_789"
+            autopilot = MoneyAutopilot.from_path(_write_portfolio(tmp))
+            with patch.object(
+                MoneyAutopilot,
+                "_run_weather_decision",
+                side_effect=RuntimeError(f"upstream rejected Authorization: Bearer {secret}"),
+            ):
+                autopilot.run_once()
 
             store_text = (tmp / "state" / "audit-money-lab" / "autopilot.jsonl").read_text(encoding="utf-8")
             self.assertNotIn(secret, store_text)
