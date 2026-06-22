@@ -688,6 +688,24 @@ def command_money_opportunity_portfolio(args: argparse.Namespace) -> None:
     _print_json(payload)
 
 
+def command_money_value_sprint(args: argparse.Namespace) -> None:
+    from behavior_lab.money.value_sprint import ValueSprintConfig, run_autonomous_value_sprint
+
+    payload = run_autonomous_value_sprint(
+        ValueSprintConfig(
+            state_dir=args.state_dir,
+            output_dir=args.output_dir,
+            start_at=args.start_at,
+            days=args.days,
+            monthly_budget_usd=args.monthly_budget,
+            include_purchase_timing=args.include_purchase_timing,
+            include_seller_shadow=args.include_seller_shadow,
+            seller_readiness_passed=args.seller_readiness_passed,
+        )
+    )
+    _print_json(payload)
+
+
 def _write_json_output(output: str | None, payload: dict[str, Any]) -> None:
     if output:
         path = Path(output)
@@ -1167,6 +1185,19 @@ def build_parser() -> argparse.ArgumentParser:
     money_seek_value.add_argument("--as-of")
     money_seek_value.add_argument("--output")
     money_seek_value.set_defaults(func=command_money_opportunity_portfolio, opportunity_portfolio_command="run")
+
+    money_value_sprint = money_subparsers.add_parser("value-sprint", help="Run the frozen 30-day autonomous value sprint artifact")
+    money_value_sprint_subparsers = money_value_sprint.add_subparsers(dest="value_sprint_command", required=True)
+    value_sprint_run = money_value_sprint_subparsers.add_parser("run", help="Generate AUTONOMOUS_VALUE_SPRINT artifacts")
+    value_sprint_run.add_argument("--state-dir", default=".autonomous_value_sprint")
+    value_sprint_run.add_argument("--output-dir", default="reports/finance")
+    value_sprint_run.add_argument("--start-at", default="2026-06-22T12:00:00+00:00")
+    value_sprint_run.add_argument("--days", type=_positive, default=30)
+    value_sprint_run.add_argument("--monthly-budget", type=float, default=40.0)
+    value_sprint_run.add_argument("--include-purchase-timing", action="store_true")
+    value_sprint_run.add_argument("--include-seller-shadow", action="store_true")
+    value_sprint_run.add_argument("--seller-readiness-passed", action="store_true")
+    value_sprint_run.set_defaults(func=command_money_value_sprint)
 
     money_canary = money_subparsers.add_parser("canary", help="Manage immutable prospective paper canaries")
     money_canary_subparsers = money_canary.add_subparsers(dest="canary_command", required=True)
