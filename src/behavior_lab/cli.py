@@ -41,7 +41,7 @@ from behavior_lab.datasets.nber_best_offer.audit import audit as nber_audit
 from behavior_lab.datasets.nber_best_offer.audit import benchmark as nber_benchmark
 from behavior_lab.datasets.nber_best_offer.inventory import inventory_path
 from behavior_lab.datasets.nber_best_offer.normalize import build_sample_dataset, normalize_dataset
-from behavior_lab.datasets.nber_best_offer.real_normalize import inspect_real_source_schema, normalize_real_dataset
+from behavior_lab.datasets.nber_best_offer.real_normalize import full_normalization_status, inspect_real_source_schema, normalize_real_dataset
 from behavior_lab.datasets.nber_best_offer.replication import replication_check, validate_replication_targets
 from behavior_lab.datasets.nber_best_offer.source_inventory import inventory_official_sources, public_summary, run_source_inventory
 from behavior_lab.datasets.nber_best_offer.source_schema import inspect_schema
@@ -347,18 +347,26 @@ def command_nber_inspect_schema(args: argparse.Namespace) -> None:
 
 
 def command_nber_normalize_real(args: argparse.Namespace) -> None:
+    raw_dir = args.raw_dir or str(Path(os.environ.get("OFFERLAB_DATA_ROOT", r"C:\OfferLabData")) / "raw" / "nber_best_offer")
+    output_dir = args.output_dir or str(Path(os.environ.get("OFFERLAB_DATA_ROOT", r"C:\OfferLabData")) / "processed" / "nber_best_offer_full")
     _print_json(
         normalize_real_dataset(
-            args.raw_dir,
-            args.output_dir,
+            raw_dir,
+            output_dir,
             limit_threads=args.limit_threads,
             full=args.full,
             bucket_count=args.bucket_count,
             partition_rows=args.partition_rows,
             seed=args.seed,
+            resume=args.resume,
             stop_after_thread_pass=args.stop_after_thread_pass,
         )
     )
+
+
+def command_nber_full_status(args: argparse.Namespace) -> None:
+    output_dir = args.output_dir or str(Path(os.environ.get("OFFERLAB_DATA_ROOT", r"C:\OfferLabData")) / "processed" / "nber_best_offer_full")
+    _print_json(full_normalization_status(output_dir))
 
 
 def command_nber_replication_check(args: argparse.Namespace) -> None:
@@ -537,15 +545,20 @@ def build_parser() -> argparse.ArgumentParser:
     nber_inspect_schema.set_defaults(func=command_nber_inspect_schema)
 
     nber_normalize_real = nber_subparsers.add_parser("normalize-real", help="Normalize official NBER real source with thread-linked listing extraction")
-    nber_normalize_real.add_argument("--raw-dir", required=True)
-    nber_normalize_real.add_argument("--output-dir", required=True)
+    nber_normalize_real.add_argument("--raw-dir", default=None, help="Defaults to OFFERLAB_DATA_ROOT/raw/nber_best_offer")
+    nber_normalize_real.add_argument("--output-dir", default=None, help="Defaults to OFFERLAB_DATA_ROOT/processed/nber_best_offer_full")
     nber_normalize_real.add_argument("--limit-threads", type=_positive)
     nber_normalize_real.add_argument("--full", action="store_true")
+    nber_normalize_real.add_argument("--resume", action="store_true", help="Reuse verified partition checkpoints and completed output files")
     nber_normalize_real.add_argument("--bucket-count", type=_positive, default=32)
     nber_normalize_real.add_argument("--partition-rows", type=_positive, default=50_000)
     nber_normalize_real.add_argument("--seed", type=int, default=20240621)
     nber_normalize_real.add_argument("--stop-after-thread-pass", action="store_true", help=argparse.SUPPRESS)
     nber_normalize_real.set_defaults(func=command_nber_normalize_real)
+
+    nber_full_status = nber_subparsers.add_parser("full-status", help="Report full NBER normalization progress, checkpoints, and manifest integrity")
+    nber_full_status.add_argument("--output-dir", default=None, help="Defaults to OFFERLAB_DATA_ROOT/processed/nber_best_offer_full")
+    nber_full_status.set_defaults(func=command_nber_full_status)
 
     nber_replication = nber_subparsers.add_parser("replication-check", help="Validate or run the frozen NBER replication contract")
     nber_replication.add_argument("--normalized-dir", help="Run checks against a normalized real-source manifest")

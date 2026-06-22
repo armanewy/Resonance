@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 import csv
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 import gzip
 import hashlib
 import json
@@ -104,7 +104,9 @@ def normalize_real_dataset(
     bucket_count: int = 32,
     partition_rows: int = 50_000,
     seed: int = 20240621,
+    resume: bool = False,
     stop_after_thread_pass: bool = False,
+    stop_after_turn_partitions: bool = False,
 ) -> dict[str, Any]:
     if not full and limit_threads is None:
         raise NberRealNormalizeError("Use --limit-threads or --full for real NBER normalization")
@@ -116,6 +118,8 @@ def normalize_real_dataset(
     output.mkdir(parents=True, exist_ok=True)
     checkpoints = output / "checkpoints"
     checkpoints.mkdir(parents=True, exist_ok=True)
+    partition_checkpoints = checkpoints / "partitions"
+    partition_checkpoints.mkdir(parents=True, exist_ok=True)
     temp_dir = output / "_tmp"
     temp_dir.mkdir(parents=True, exist_ok=True)
     tables = output / "tables"
@@ -211,13 +215,45 @@ def normalize_real_dataset(
 
     turn_table = tables / "negotiation_turns"
     listing_table = tables / "listings"
-    for table_dir in [turn_table, listing_table]:
-        if table_dir.exists():
+    for table_name, table_dir in [("negotiation_turns", turn_table), ("listings", listing_table)]:
+        if table_dir.exists() and not resume:
             shutil.rmtree(table_dir)
-        table_dir.mkdir(parents=True)
+            for checkpoint_file in partition_checkpoints.glob(f"{table_name}_*.json"):
+                checkpoint_file.unlink()
+        table_dir.mkdir(parents=True, exist_ok=True)
 
-    turn_rows = _write_turn_partitions(bucket_dir, turn_table, bucket_count=bucket_count, partition_rows=partition_rows, quarantine=quarantine)
-    listing_rows = _write_listing_partitions(lists_path, id_index_path, listing_table, partition_rows=partition_rows, quarantine=quarantine)
+    partition_signature = _partition_checkpoint_signature(
+        args_signature=args_signature,
+        source_hashes=source_hashes,
+        header_report=header_report,
+    )
+    turn_rows = _write_turn_partitions(
+        bucket_dir,
+        turn_table,
+        checkpoint_dir=partition_checkpoints,
+        signature=partition_signature,
+        bucket_count=bucket_count,
+        partition_rows=partition_rows,
+        quarantine=quarantine,
+        resume=resume,
+    )
+    if stop_after_turn_partitions:
+        return {
+            "status": "stopped_after_turn_partitions",
+            "thread_pass": thread_counts,
+            "turn_partitions": turn_rows,
+            "output_dir": str(output.resolve()),
+        }
+    listing_rows = _write_listing_partitions(
+        lists_path,
+        id_index_path,
+        listing_table,
+        checkpoint_dir=partition_checkpoints,
+        signature=partition_signature,
+        partition_rows=partition_rows,
+        quarantine=quarantine,
+        resume=resume,
+    )
     quarantine_path = output / "quarantine.json"
     quarantine_payload = quarantine.to_payload()
     _write_atomic_json(quarantine_path, quarantine_payload)
@@ -248,9 +284,30 @@ def normalize_real_dataset(
         "full_release_preflight": full_preflight,
         "official_source_contract": _official_source_contract(source_hashes, source_bytes),
         "tables": {
-            "negotiation_turns": {"path": str(turn_table.resolve()), "format": "parquet" if _pyarrow_available() else "jsonl", "rows": turn_rows["rows"], "partitions": turn_rows["partitions"]},
-            "listings": {"path": str(listing_table.resolve()), "format": "parquet" if _pyarrow_available() else "jsonl", "rows": listing_rows["rows"], "partitions": listing_rows["partitions"]},
+            "negotiation_turns": {
+                "path": str(turn_table.resolve()),
+                "format": "parquet" if _pyarrow_available() else "jsonl",
+                "rows": turn_rows["rows"],
+                "partitions": turn_rows["partitions"],
+                "schema": {
+                    "schema_version": "nber_real_negotiation_turns.v1",
+                    "transformation_version": REAL_TRANSFORMATION_VERSION,
+                    "columns": _normalized_columns(turn_rows["partitions"]),
+                },
+            },
+            "listings": {
+                "path": str(listing_table.resolve()),
+                "format": "parquet" if _pyarrow_available() else "jsonl",
+                "rows": listing_rows["rows"],
+                "partitions": listing_rows["partitions"],
+                "schema": {
+                    "schema_version": "nber_real_listings.v1",
+                    "transformation_version": REAL_TRANSFORMATION_VERSION,
+                    "columns": _normalized_columns(listing_rows["partitions"]),
+                },
+            },
         },
+        "summary": _normalization_summary(thread_counts=thread_counts, turn_rows=turn_rows, listing_rows=listing_rows),
         "source_thread_pass": thread_counts,
         "thread_linked_listing_extraction": {
             "distinct_listing_ids": listing_rows["distinct_listing_ids"],
@@ -284,8 +341,69 @@ def normalize_real_dataset(
     manifest["lineage"]["normalization_manifest_hash"] = manifest_hash
     manifest["lineage"]["normalization_manifest_payload_hash"] = manifest_hash
     _write_atomic_json(manifest_path, manifest)
+    replication_artifact = _run_replication_artifact(output, manifest_hash=manifest_hash)
+    manifest["replication_checks"] = replication_artifact
+    manifest["audited_full_release_evidence"]["replication_contract_artifact"] = {
+        "path": replication_artifact["path"],
+        "sha256": replication_artifact["sha256"],
+    }
+    manifest_hash = _canonical_manifest_hash(manifest)
+    manifest["lineage"]["normalization_manifest_hash"] = manifest_hash
+    manifest["lineage"]["normalization_manifest_payload_hash"] = manifest_hash
+    _write_atomic_json(manifest_path, manifest)
     manifest_sha_path.write_text(f"{sha256_file(manifest_path)}  {manifest_path.name}\n", encoding="utf-8")
     return manifest
+
+
+def full_normalization_status(output_dir: str | Path) -> dict[str, Any]:
+    output = Path(output_dir)
+    manifest_path = output / "manifest.json"
+    checkpoints = output / "checkpoints"
+    partition_checkpoint_dir = checkpoints / "partitions"
+    checkpoint_files = sorted(partition_checkpoint_dir.glob("*.json")) if partition_checkpoint_dir.exists() else []
+    partition_checkpoints = []
+    for path in checkpoint_files:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            partition_checkpoints.append({"path": str(path.resolve()), "valid_json": False})
+            continue
+        partition_checkpoints.append(
+            {
+                "path": str(path.resolve()),
+                "valid_json": True,
+                "table": payload.get("table"),
+                "partition_index": payload.get("partition", {}).get("partition_index"),
+                "rows": payload.get("partition", {}).get("rows"),
+                "sha256_verified": _partition_record_hash_matches(payload.get("partition", {})),
+            }
+        )
+    if not manifest_path.exists():
+        return {
+            "schema_version": "nber_full_normalization_status.v1",
+            "status": "incomplete",
+            "output_dir": str(output.resolve()),
+            "manifest_exists": False,
+            "thread_checkpoint_exists": (checkpoints / "thread_pass.complete.json").exists(),
+            "partition_checkpoints": partition_checkpoints,
+        }
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    partition_integrity = _manifest_partition_integrity(manifest)
+    evidence = verify_full_release_evidence(manifest)
+    return {
+        "schema_version": "nber_full_normalization_status.v1",
+        "status": manifest.get("status", "unknown"),
+        "output_dir": str(output.resolve()),
+        "manifest_exists": True,
+        "manifest_hash": sha256_file(manifest_path),
+        "normalization_manifest_hash": manifest.get("lineage", {}).get("normalization_manifest_hash"),
+        "source_files": manifest.get("source_files", {}),
+        "summary": manifest.get("summary", {}),
+        "partition_integrity": partition_integrity,
+        "full_release_evidence": evidence,
+        "thread_checkpoint_exists": (checkpoints / "thread_pass.complete.json").exists(),
+        "partition_checkpoints": partition_checkpoints,
+    }
 
 
 def inspect_real_source_schema(raw_dir: str | Path) -> dict[str, Any]:
@@ -343,6 +461,8 @@ def _bucket_thread_rows(
                 bucket_handles[bucket].write(json.dumps(row, sort_keys=True) + "\n")
                 bucket_row_counts[bucket] += 1
                 _id_index_insert(index, "listing_ids", "listing_id", listing_id)
+                _id_index_insert(index, "buyer_ids", "buyer_id", row.get("anon_byr_id", ""))
+                _id_index_insert(index, "seller_ids", "seller_id", row.get("anon_slr_id", ""))
                 accepted_rows += 1
                 if accepted_rows % 10_000 == 0:
                     index.commit()
@@ -365,11 +485,22 @@ def _bucket_thread_rows(
     }
 
 
-def _write_turn_partitions(bucket_dir: Path, table_dir: Path, *, bucket_count: int, partition_rows: int, quarantine: Quarantine) -> dict[str, Any]:
+def _write_turn_partitions(
+    bucket_dir: Path,
+    table_dir: Path,
+    *,
+    checkpoint_dir: Path,
+    signature: dict[str, Any],
+    bucket_count: int,
+    partition_rows: int,
+    quarantine: Quarantine,
+    resume: bool,
+) -> dict[str, Any]:
     rows_out = []
     partitions = []
     total = 0
     part_index = 0
+    stats = _new_turn_summary()
     for bucket in (bucket_dir / f"bucket_{index:04d}.jsonl" for index in range(bucket_count)):
         staging_path = bucket.with_suffix(".sqlite")
         if staging_path.exists():
@@ -408,12 +539,25 @@ def _write_turn_partitions(bucket_dir: Path, table_dir: Path, *, bucket_count: i
                 for index, (payload,) in enumerate(cursor, start=1):
                     row = json.loads(payload)
                     try:
-                        rows_out.append(_normalize_thread_row(row, turn_index=index))
+                        normalized = _normalize_thread_row(row, turn_index=index)
                     except Exception:
                         quarantine.add("thread_normalization_error", row, source_file=bucket.name, line_number=index)
                         continue
+                    rows_out.append(normalized)
+                    _update_turn_summary(stats, normalized)
                     if len(rows_out) >= partition_rows:
-                        partitions.append(_write_partition(table_dir, "turns", part_index, rows_out))
+                        partitions.append(
+                            _write_or_resume_partition(
+                                table_dir,
+                                "negotiation_turns",
+                                "turns",
+                                part_index,
+                                rows_out,
+                                checkpoint_dir=checkpoint_dir,
+                                signature=signature,
+                                resume=resume,
+                            )
+                        )
                         total += len(rows_out)
                         rows_out = []
                         part_index += 1
@@ -422,9 +566,20 @@ def _write_turn_partitions(bucket_dir: Path, table_dir: Path, *, bucket_count: i
             if staging_path.exists():
                 staging_path.unlink()
     if rows_out:
-        partitions.append(_write_partition(table_dir, "turns", part_index, rows_out))
+        partitions.append(
+            _write_or_resume_partition(
+                table_dir,
+                "negotiation_turns",
+                "turns",
+                part_index,
+                rows_out,
+                checkpoint_dir=checkpoint_dir,
+                signature=signature,
+                resume=resume,
+            )
+        )
         total += len(rows_out)
-    return {"rows": total, "partitions": partitions}
+    return {"rows": total, "partitions": partitions, "summary": _finalize_summary(stats)}
 
 
 def _write_listing_partitions(
@@ -432,14 +587,19 @@ def _write_listing_partitions(
     id_index_path: Path,
     table_dir: Path,
     *,
+    checkpoint_dir: Path,
+    signature: dict[str, Any],
     partition_rows: int,
     quarantine: Quarantine,
+    resume: bool,
 ) -> dict[str, Any]:
     rows_out = []
     partitions = []
     total = 0
     part_index = 0
+    duplicate_listing_ids = 0
     index = _open_id_index(id_index_path, reset=False)
+    stats = _open_listing_stats(table_dir / "_listing_stats.sqlite")
     try:
         with _open_text(lists_path) as handle:
             reader = csv.DictReader(handle)
@@ -447,31 +607,72 @@ def _write_listing_partitions(
                 listing_id = row.get("anon_item_id", "")
                 if not _id_index_contains(index, "listing_ids", "listing_id", listing_id):
                     continue
+                if not _stats_insert(stats, "listing_ids", "listing_id", listing_id):
+                    duplicate_listing_ids += 1
+                    quarantine.add("duplicate_listing_id", row, source_file=lists_path.name, line_number=line_number)
+                    continue
                 try:
-                    rows_out.append(_normalize_listing_row(row))
+                    normalized = _normalize_listing_row(row)
                 except Exception:
                     quarantine.add("listing_normalization_error", row, source_file=lists_path.name, line_number=line_number)
                     continue
+                rows_out.append(normalized)
+                _update_listing_summary(stats, normalized)
                 index.execute("UPDATE listing_ids SET matched = 1 WHERE listing_id = ?", (listing_id,))
                 if len(rows_out) >= partition_rows:
-                    partitions.append(_write_partition(table_dir, "listings", part_index, rows_out))
+                    partitions.append(
+                        _write_or_resume_partition(
+                            table_dir,
+                            "listings",
+                            "listings",
+                            part_index,
+                            rows_out,
+                            checkpoint_dir=checkpoint_dir,
+                            signature=signature,
+                            resume=resume,
+                        )
+                    )
                     total += len(rows_out)
                     rows_out = []
                     part_index += 1
         if rows_out:
-            partitions.append(_write_partition(table_dir, "listings", part_index, rows_out))
+            partitions.append(
+                _write_or_resume_partition(
+                    table_dir,
+                    "listings",
+                    "listings",
+                    part_index,
+                    rows_out,
+                    checkpoint_dir=checkpoint_dir,
+                    signature=signature,
+                    resume=resume,
+                )
+            )
             total += len(rows_out)
         index.commit()
         id_stats = _listing_id_stats(index)
+        listing_summary = _listing_stats_summary(stats)
     finally:
+        stats.close()
+        stats_path = table_dir / "_listing_stats.sqlite"
+        if stats_path.exists():
+            stats_path.unlink()
         index.close()
-    return {"rows": total, "partitions": partitions, **id_stats}
+    return {
+        "rows": total,
+        "partitions": partitions,
+        "summary": listing_summary,
+        "duplicate_listing_ids_quarantined": duplicate_listing_ids,
+        **id_stats,
+    }
 
 
 def _normalize_thread_row(row: dict[str, str], *, turn_index: int) -> dict[str, Any]:
     offer_type = OFFER_TYPE_MAP[row["offr_type_id"]]
+    raw_hash = _row_hash(row)
     return {
-        "source_row_id": _row_hash(row),
+        "source_row_id": raw_hash,
+        "raw_source_row_hash": raw_hash,
         "thread_id": row["anon_thread_id"],
         "listing_id": row["anon_item_id"],
         "buyer_id": row["anon_byr_id"],
@@ -499,6 +700,7 @@ def _normalize_listing_row(row: dict[str, str]) -> dict[str, Any]:
     product_id = None if row.get("anon_product_id") in {"", "547957"} else row.get("anon_product_id")
     return {
         "source_row_id": row["anon_item_id"],
+        "raw_source_row_hash": _row_hash(row),
         "listing_id": row["anon_item_id"],
         "seller_id": row["anon_slr_id"],
         "buyer_id_if_sold": row.get("anon_buyer_id") or None,
@@ -530,29 +732,338 @@ def _normalize_listing_row(row: dict[str, str]) -> dict[str, Any]:
 
 
 def _write_partition(table_dir: Path, stem: str, index: int, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    partition_dir = table_dir / f"partition={index:05d}"
+    partition_dir.mkdir(parents=True, exist_ok=True)
     if _pyarrow_available():
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        path = table_dir / f"{stem}_{index:05d}.parquet"
+        path = partition_dir / f"{stem}_{index:05d}.parquet"
         table = pa.Table.from_pylist(rows)
         tmp = path.with_suffix(path.suffix + ".tmp")
         pq.write_table(table, tmp)
+        pq.read_metadata(tmp)
         os.replace(tmp, path)
     else:
-        path = table_dir / f"{stem}_{index:05d}.jsonl"
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=table_dir, newline="\n") as handle:
+        path = partition_dir / f"{stem}_{index:05d}.jsonl"
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=partition_dir, newline="\n") as handle:
             tmp_path = Path(handle.name)
             for row in rows:
                 handle.write(json.dumps(row, sort_keys=True) + "\n")
         os.replace(tmp_path, path)
-    return {"path": str(path.resolve()), "rows": len(rows), "sha256": sha256_file(path)}
+    partition = {"path": str(path.resolve()), "rows": len(rows), "sha256": sha256_file(path), "partition_index": index}
+    if not _partition_record_hash_matches(partition):
+        raise NberRealNormalizeError(f"Partition hash verification failed for {path}")
+    return partition
+
+
+def _write_or_resume_partition(
+    table_dir: Path,
+    table_name: str,
+    stem: str,
+    index: int,
+    rows: list[dict[str, Any]],
+    *,
+    checkpoint_dir: Path,
+    signature: dict[str, Any],
+    resume: bool,
+) -> dict[str, Any]:
+    checkpoint_path = _partition_checkpoint_path(checkpoint_dir, table_name, index)
+    if resume:
+        checkpoint = _load_valid_partition_checkpoint(
+            checkpoint_path,
+            signature=signature,
+            table_name=table_name,
+            partition_index=index,
+            expected_rows=len(rows),
+        )
+        if checkpoint is not None:
+            return dict(checkpoint["partition"])
+    partition = _write_partition(table_dir, stem, index, rows)
+    _write_atomic_json(
+        checkpoint_path,
+        {
+            "schema_version": "nber_partition_checkpoint.v1",
+            "signature": signature,
+            "table": table_name,
+            "partition": partition,
+            "completed_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        },
+    )
+    checkpoint = _load_valid_partition_checkpoint(
+        checkpoint_path,
+        signature=signature,
+        table_name=table_name,
+        partition_index=index,
+        expected_rows=len(rows),
+    )
+    if checkpoint is None:
+        raise NberRealNormalizeError(f"Partition checkpoint verification failed for {checkpoint_path}")
+    return partition
+
+
+def _partition_checkpoint_path(checkpoint_dir: Path, table_name: str, index: int) -> Path:
+    return checkpoint_dir / f"{table_name}_{index:05d}.json"
+
+
+def _load_valid_partition_checkpoint(
+    path: Path,
+    *,
+    signature: dict[str, Any],
+    table_name: str,
+    partition_index: int,
+    expected_rows: int,
+) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    if payload.get("signature") != signature:
+        return None
+    if payload.get("table") != table_name:
+        return None
+    partition = payload.get("partition", {})
+    if partition.get("partition_index") != partition_index:
+        return None
+    if partition.get("rows") != expected_rows:
+        return None
+    if not _partition_record_hash_matches(partition):
+        return None
+    return payload
+
+
+def _partition_record_hash_matches(partition: dict[str, Any]) -> bool:
+    path_text = str(partition.get("path", ""))
+    expected_hash = partition.get("sha256")
+    if not path_text or not expected_hash:
+        return False
+    path = Path(path_text)
+    return path.exists() and sha256_file(path) == expected_hash
 
 
 def _validate_source_headers(lists_path: Path, threads_path: Path) -> dict[str, Any]:
     listing_header = _read_header(lists_path)
     thread_header = _read_header(threads_path)
     return validate_real_headers(listings=listing_header, threads=thread_header)
+
+
+def _new_turn_summary() -> dict[str, Any]:
+    return {
+        "status_counts": Counter(),
+        "offer_type_counts": Counter(),
+        "event_time_min": None,
+        "event_time_max": None,
+        "response_time_min": None,
+        "response_time_max": None,
+    }
+
+
+def _update_turn_summary(summary: dict[str, Any], row: dict[str, Any]) -> None:
+    status = row.get("status")
+    action = row.get("action")
+    if status is not None:
+        summary["status_counts"][str(status)] += 1
+    if action is not None:
+        summary["offer_type_counts"][str(action)] += 1
+    _summary_range(summary, "event_time", row.get("event_time"))
+    _summary_range(summary, "response_time", row.get("response_time"))
+
+
+def _summary_range(summary: dict[str, Any], prefix: str, value: Any) -> None:
+    if value in {None, ""}:
+        return
+    text = str(value)
+    min_key = f"{prefix}_min"
+    max_key = f"{prefix}_max"
+    if summary.get(min_key) is None or text < summary[min_key]:
+        summary[min_key] = text
+    if summary.get(max_key) is None or text > summary[max_key]:
+        summary[max_key] = text
+
+
+def _finalize_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    finalized = {}
+    for key, value in summary.items():
+        if isinstance(value, Counter):
+            finalized[key] = dict(sorted(value.items()))
+        else:
+            finalized[key] = value
+    return finalized
+
+
+def _open_listing_stats(path: Path) -> sqlite3.Connection:
+    if path.exists():
+        path.unlink()
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA journal_mode=OFF")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("CREATE TABLE listing_ids (listing_id TEXT PRIMARY KEY)")
+    conn.execute("CREATE TABLE seller_ids (seller_id TEXT PRIMARY KEY)")
+    conn.execute("CREATE TABLE buyer_ids (buyer_id TEXT PRIMARY KEY)")
+    conn.execute("CREATE TABLE category_counts (category TEXT PRIMARY KEY, rows INTEGER NOT NULL)")
+    conn.execute("CREATE TABLE ranges (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    return conn
+
+
+def _update_listing_summary(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
+    _stats_insert(conn, "seller_ids", "seller_id", row.get("seller_id"))
+    _stats_insert(conn, "buyer_ids", "buyer_id", row.get("buyer_id_if_sold"))
+    category = row.get("category")
+    if category not in {None, ""}:
+        conn.execute("INSERT OR IGNORE INTO category_counts (category, rows) VALUES (?, 0)", (str(category),))
+        conn.execute("UPDATE category_counts SET rows = rows + 1 WHERE category = ?", (str(category),))
+    _stats_range(conn, "listing_start_min", row.get("start_time"), minimum=True)
+    _stats_range(conn, "listing_start_max", row.get("start_time"), minimum=False)
+    _stats_range(conn, "listing_end_min", row.get("end_time"), minimum=True)
+    _stats_range(conn, "listing_end_max", row.get("end_time"), minimum=False)
+
+
+def _stats_insert(conn: sqlite3.Connection, table: str, column: str, value: Any) -> bool:
+    _validate_stats_table_column(table, column)
+    if value in {None, ""}:
+        return False
+    cursor = conn.execute(f"INSERT OR IGNORE INTO {table} ({column}) VALUES (?)", (str(value),))
+    return cursor.rowcount > 0
+
+
+def _stats_range(conn: sqlite3.Connection, key: str, value: Any, *, minimum: bool) -> None:
+    if value in {None, ""}:
+        return
+    text = str(value)
+    existing = conn.execute("SELECT value FROM ranges WHERE key = ?", (key,)).fetchone()
+    if existing is None:
+        conn.execute("INSERT INTO ranges (key, value) VALUES (?, ?)", (key, text))
+        return
+    old = str(existing[0])
+    if (minimum and text < old) or ((not minimum) and text > old):
+        conn.execute("UPDATE ranges SET value = ? WHERE key = ?", (text, key))
+
+
+def _listing_stats_summary(conn: sqlite3.Connection) -> dict[str, Any]:
+    conn.commit()
+    ranges = {key: value for key, value in conn.execute("SELECT key, value FROM ranges ORDER BY key")}
+    top_categories = [
+        {"category": category, "rows": rows}
+        for category, rows in conn.execute("SELECT category, rows FROM category_counts ORDER BY rows DESC, category LIMIT 25")
+    ]
+    return {
+        "distinct_listings": int(conn.execute("SELECT COUNT(*) FROM listing_ids").fetchone()[0]),
+        "distinct_sellers": int(conn.execute("SELECT COUNT(*) FROM seller_ids").fetchone()[0]),
+        "distinct_buyers_if_sold": int(conn.execute("SELECT COUNT(*) FROM buyer_ids").fetchone()[0]),
+        "distinct_categories": int(conn.execute("SELECT COUNT(*) FROM category_counts").fetchone()[0]),
+        "top_categories": top_categories,
+        "date_ranges": ranges,
+    }
+
+
+def _validate_stats_table_column(table: str, column: str) -> None:
+    allowed = {"listing_ids": "listing_id", "seller_ids": "seller_id", "buyer_ids": "buyer_id"}
+    if allowed.get(table) != column:
+        raise NberRealNormalizeError(f"Invalid internal stats reference {table}.{column}")
+
+
+def _normalization_summary(*, thread_counts: dict[str, Any], turn_rows: dict[str, Any], listing_rows: dict[str, Any]) -> dict[str, Any]:
+    index_stats = thread_counts.get("id_index_stats", {})
+    return {
+        "schema_version": "nber_real_normalization_summary.v1",
+        "row_counts": {
+            "negotiation_turns": turn_rows.get("rows", 0),
+            "listings": listing_rows.get("rows", 0),
+        },
+        "date_ranges": {
+            "event_time": {
+                "min": turn_rows.get("summary", {}).get("event_time_min"),
+                "max": turn_rows.get("summary", {}).get("event_time_max"),
+            },
+            "response_time": {
+                "min": turn_rows.get("summary", {}).get("response_time_min"),
+                "max": turn_rows.get("summary", {}).get("response_time_max"),
+            },
+            "listing_start": {
+                "min": listing_rows.get("summary", {}).get("date_ranges", {}).get("listing_start_min"),
+                "max": listing_rows.get("summary", {}).get("date_ranges", {}).get("listing_start_max"),
+            },
+            "listing_end": {
+                "min": listing_rows.get("summary", {}).get("date_ranges", {}).get("listing_end_min"),
+                "max": listing_rows.get("summary", {}).get("date_ranges", {}).get("listing_end_max"),
+            },
+        },
+        "categories": {
+            "distinct": listing_rows.get("summary", {}).get("distinct_categories", 0),
+            "top_counts": listing_rows.get("summary", {}).get("top_categories", []),
+        },
+        "sellers": {
+            "distinct_in_threads": index_stats.get("seller_ids"),
+            "distinct_in_matched_listings": listing_rows.get("summary", {}).get("distinct_sellers", 0),
+        },
+        "buyers": {
+            "distinct_in_threads": index_stats.get("buyer_ids"),
+            "distinct_if_sold_in_matched_listings": listing_rows.get("summary", {}).get("distinct_buyers_if_sold", 0),
+        },
+        "listings": {
+            "referenced_distinct": listing_rows.get("distinct_listing_ids"),
+            "matched": listing_rows.get("matched_listing_ids"),
+            "unmatched": listing_rows.get("unmatched_listing_ids"),
+        },
+        "threads": {
+            "distinct": thread_counts.get("distinct_threads"),
+        },
+        "turns": {
+            "rows": turn_rows.get("rows", 0),
+            "status_counts": thread_counts.get("status_counts", {}),
+            "offer_type_counts": thread_counts.get("offer_type_counts", {}),
+        },
+        "duplicates": {
+            "duplicate_thread_rows_removed": thread_counts.get("duplicate_full_rows_removed", 0),
+            "duplicate_listing_ids_quarantined": listing_rows.get("duplicate_listing_ids_quarantined", 0),
+        },
+    }
+
+
+def _normalized_columns(partitions: list[dict[str, Any]]) -> list[str]:
+    for partition in partitions:
+        path = Path(partition["path"])
+        if not path.exists():
+            continue
+        if path.suffix == ".parquet":
+            import pyarrow.parquet as pq
+
+            return list(pq.read_schema(path).names)
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip():
+                    return sorted(json.loads(line))
+    return []
+
+
+def _run_replication_artifact(output: Path, *, manifest_hash: str) -> dict[str, Any]:
+    artifact_path = output / "replication_check.json"
+    try:
+        from behavior_lab.datasets.nber_best_offer.replication import replication_check
+
+        payload = replication_check(output)
+    except Exception as exc:
+        payload = {
+            "schema_version": "nber_replication_check.v1",
+            "passed": False,
+            "full_replication_passed": False,
+            "fatal_failures": [],
+            "fatal_unevaluated": ["replication_check_error"],
+            "error": str(exc),
+        }
+    payload["normalization_manifest_hash"] = manifest_hash
+    _write_atomic_json(artifact_path, payload)
+    return {
+        "schema_version": "nber_replication_artifact.v1",
+        "path": str(artifact_path.resolve()),
+        "sha256": sha256_file(artifact_path),
+        "passed": bool(payload.get("passed")),
+        "full_replication_passed": bool(payload.get("full_replication_passed")),
+        "fatal_failures": len(payload.get("fatal_failures", [])),
+        "fatal_unevaluated": len(payload.get("fatal_unevaluated", [])),
+    }
 
 
 def _read_header(path: Path) -> list[str]:
@@ -1003,6 +1514,21 @@ def _thread_checkpoint_signature(
     }
 
 
+def _partition_checkpoint_signature(
+    *,
+    args_signature: dict[str, Any],
+    source_hashes: dict[str, str],
+    header_report: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema_version": "nber_real_partition_signature.v1",
+        "command_args": args_signature,
+        "source_hashes": source_hashes,
+        "header_validation": header_report,
+        "mapping_manifest_hash": mapping_hash(),
+    }
+
+
 def _bucket_manifest(bucket_dir: Path, bucket_count: int, *, row_counts: list[int] | None = None) -> dict[str, Any]:
     expected_names = {f"bucket_{index:04d}.jsonl" for index in range(bucket_count)}
     actual_names = {path.name for path in bucket_dir.glob("bucket_*.jsonl")}
@@ -1090,6 +1616,8 @@ def _open_id_index(path: Path, *, reset: bool) -> sqlite3.Connection:
     conn.execute("CREATE TABLE IF NOT EXISTS seen_threads (thread_id TEXT PRIMARY KEY)")
     conn.execute("CREATE TABLE IF NOT EXISTS row_hashes (row_hash TEXT PRIMARY KEY)")
     conn.execute("CREATE TABLE IF NOT EXISTS listing_ids (listing_id TEXT PRIMARY KEY, matched INTEGER NOT NULL DEFAULT 0)")
+    conn.execute("CREATE TABLE IF NOT EXISTS buyer_ids (buyer_id TEXT PRIMARY KEY)")
+    conn.execute("CREATE TABLE IF NOT EXISTS seller_ids (seller_id TEXT PRIMARY KEY)")
     return conn
 
 
@@ -1102,6 +1630,8 @@ def _id_index_is_valid(path: Path) -> bool:
             conn.execute("SELECT COUNT(*) FROM listing_ids").fetchone()
             conn.execute("SELECT COUNT(*) FROM seen_threads").fetchone()
             conn.execute("SELECT COUNT(*) FROM row_hashes").fetchone()
+            conn.execute("SELECT COUNT(*) FROM buyer_ids").fetchone()
+            conn.execute("SELECT COUNT(*) FROM seller_ids").fetchone()
             return True
         finally:
             conn.close()
@@ -1114,9 +1644,13 @@ def _id_index_checkpoint_stats(conn: sqlite3.Connection) -> dict[str, int | str]
         "seen_threads": int(conn.execute("SELECT COUNT(*) FROM seen_threads").fetchone()[0]),
         "row_hashes": int(conn.execute("SELECT COUNT(*) FROM row_hashes").fetchone()[0]),
         "listing_ids": int(conn.execute("SELECT COUNT(*) FROM listing_ids").fetchone()[0]),
+        "buyer_ids": int(conn.execute("SELECT COUNT(*) FROM buyer_ids").fetchone()[0]),
+        "seller_ids": int(conn.execute("SELECT COUNT(*) FROM seller_ids").fetchone()[0]),
         "seen_threads_hash": _sqlite_column_hash(conn, "seen_threads", "thread_id"),
         "row_hashes_hash": _sqlite_column_hash(conn, "row_hashes", "row_hash"),
         "listing_ids_hash": _sqlite_column_hash(conn, "listing_ids", "listing_id"),
+        "buyer_ids_hash": _sqlite_column_hash(conn, "buyer_ids", "buyer_id"),
+        "seller_ids_hash": _sqlite_column_hash(conn, "seller_ids", "seller_id"),
     }
 
 
@@ -1145,7 +1679,13 @@ def _id_index_insert(conn: sqlite3.Connection, table: str, column: str, value: s
 
 
 def _validate_index_table_column(table: str, column: str) -> None:
-    allowed = {"seen_threads": "thread_id", "row_hashes": "row_hash", "listing_ids": "listing_id"}
+    allowed = {
+        "seen_threads": "thread_id",
+        "row_hashes": "row_hash",
+        "listing_ids": "listing_id",
+        "buyer_ids": "buyer_id",
+        "seller_ids": "seller_id",
+    }
     if allowed.get(table) != column:
         raise NberRealNormalizeError(f"Invalid internal index reference {table}.{column}")
 

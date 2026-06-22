@@ -1,5 +1,8 @@
 from pathlib import Path
+import gzip
 import json
+import os
+import subprocess
 import sqlite3
 import sys
 import tempfile
@@ -13,6 +16,7 @@ from behavior_lab.datasets.nber_best_offer.real_normalize import (
     OFFICIAL_FULL_SOURCE_EXPECTATIONS,
     _artifact_binds_to_manifest,
     _independent_audit_artifact_verification,
+    full_normalization_status,
     _normalize_listing_row,
     normalize_real_dataset,
     sha256_file,
@@ -35,6 +39,19 @@ FIXTURES = ROOT / "tests" / "fixtures" / "nber_real_schema"
 
 
 class RealNberPipelineTests(unittest.TestCase):
+    def _write_gzip_fixture(self, source: Path, destination: Path) -> None:
+        with source.open("rb") as input_handle, gzip.open(destination, "wb") as output_handle:
+            output_handle.write(input_handle.read())
+
+    def _read_first_partition_row(self, manifest: dict, table_name: str) -> dict:
+        path = Path(manifest["tables"][table_name]["partitions"][0]["path"])
+        if path.suffix == ".parquet":
+            import pyarrow.parquet as pq
+
+            return pq.read_table(path).to_pylist()[0]
+        with path.open("r", encoding="utf-8") as handle:
+            return json.loads(next(line for line in handle if line.strip()))
+
     def test_fixture_headers_match_real_contract(self) -> None:
         report = validate_real_headers(
             listings=read_csv_header(FIXTURES / "anon_bo_lists.csv"),
@@ -82,6 +99,91 @@ class RealNberPipelineTests(unittest.TestCase):
             self.assertFalse(check["full_replication_passed"])
             self.assertFalse(check["passed"])
             self.assertTrue(check["fatal_unevaluated"])
+
+    def test_full_resume_reuses_completed_partitions_and_reports_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = Path(tmp) / "raw"
+            output = Path(tmp) / "normalized"
+            raw.mkdir()
+            self._write_gzip_fixture(FIXTURES / "anon_bo_lists.csv", raw / "anon_bo_lists.csv.gz")
+            self._write_gzip_fixture(FIXTURES / "anon_bo_threads.csv", raw / "anon_bo_threads.csv.gz")
+
+            stopped = normalize_real_dataset(
+                raw,
+                output,
+                full=True,
+                bucket_count=3,
+                partition_rows=2,
+                stop_after_turn_partitions=True,
+            )
+            turn_partition = Path(stopped["turn_partitions"]["partitions"][0]["path"])
+            before_mtime = turn_partition.stat().st_mtime_ns
+            before_hash = sha256_file(turn_partition)
+
+            manifest = normalize_real_dataset(raw, output, full=True, bucket_count=3, partition_rows=2, resume=True)
+
+            self.assertEqual(turn_partition.stat().st_mtime_ns, before_mtime)
+            self.assertEqual(sha256_file(turn_partition), before_hash)
+            self.assertEqual(manifest["tables"]["negotiation_turns"]["format"], "parquet" if turn_partition.suffix == ".parquet" else "jsonl")
+            self.assertEqual(manifest["summary"]["row_counts"]["negotiation_turns"], 4)
+            self.assertEqual(manifest["summary"]["date_ranges"]["event_time"]["min"], "2012-05-01T11:00:00")
+            self.assertEqual(manifest["summary"]["date_ranges"]["response_time"]["max"], "2012-05-04T11:00:00")
+            self.assertEqual(manifest["summary"]["categories"]["distinct"], 3)
+            self.assertEqual(manifest["summary"]["sellers"]["distinct_in_threads"], 3)
+            self.assertEqual(manifest["summary"]["buyers"]["distinct_in_threads"], 3)
+            self.assertIn("replication_checks", manifest)
+            self.assertTrue(Path(manifest["replication_checks"]["path"]).exists())
+            self.assertIn("raw_source_row_hash", self._read_first_partition_row(manifest, "listings"))
+
+            status = full_normalization_status(output)
+            self.assertEqual(status["status"], "complete")
+            self.assertTrue(status["partition_integrity"]["passed"])
+            self.assertTrue(status["partition_checkpoints"])
+            self.assertTrue(all(item["sha256_verified"] for item in status["partition_checkpoints"]))
+
+    def test_cli_full_resume_default_paths_and_status_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp) / "data"
+            raw = data_root / "raw" / "nber_best_offer"
+            raw.mkdir(parents=True)
+            self._write_gzip_fixture(FIXTURES / "anon_bo_lists.csv", raw / "anon_bo_lists.csv.gz")
+            self._write_gzip_fixture(FIXTURES / "anon_bo_threads.csv", raw / "anon_bo_threads.csv.gz")
+            env = dict(os.environ)
+            env["PYTHONPATH"] = str(ROOT / "src")
+            env["OFFERLAB_DATA_ROOT"] = str(data_root)
+
+            normalize = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "behavior_lab",
+                    "nber-best-offer",
+                    "normalize-real",
+                    "--full",
+                    "--resume",
+                    "--bucket-count",
+                    "3",
+                    "--partition-rows",
+                    "2",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            manifest = json.loads(normalize.stdout)
+            self.assertEqual(manifest["status"], "complete")
+
+            status = subprocess.run(
+                [sys.executable, "-m", "behavior_lab", "nber-best-offer", "full-status"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            payload = json.loads(status.stdout)
+            self.assertEqual(payload["status"], "complete")
+            self.assertTrue(payload["partition_integrity"]["passed"])
 
     def test_complete_manifest_rerun_revalidates_raw_source_hashes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
