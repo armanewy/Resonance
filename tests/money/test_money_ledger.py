@@ -102,6 +102,8 @@ class MoneyLedgerTests(unittest.TestCase):
         with self.assertRaises(MoneyLedgerError):
             replace(_entry(), fees=None)
         with self.assertRaises(MoneyLedgerError):
+            replace(_entry(), fees=None, conservative_expected_net_value=None)
+        with self.assertRaises(MoneyLedgerError):
             replace(_entry(), evidence_state="manually_approved_real", designation="real")
         with self.assertRaises(MoneyLedgerError):
             _entry(designation="real")
@@ -123,6 +125,15 @@ class MoneyLedgerTests(unittest.TestCase):
                 resolution={"outcome": "sold", "realized_costs": {"fees": -2.0}},
                 realized_gross_value=10.0,
                 realized_net_value=12.0,
+                mechanically_defined_no_action_outcome={"value": 0.0},
+            )
+        with self.assertRaises(MoneyLedgerError):
+            replace(
+                base,
+                evidence_state="resolved_paper",
+                resolution={"outcome": "sold", "realized_costs": {"fees": None}},
+                realized_gross_value=10.0,
+                realized_net_value=10.0,
                 mechanically_defined_no_action_outcome={"value": 0.0},
             )
         with self.assertRaises(MoneyLedgerError):

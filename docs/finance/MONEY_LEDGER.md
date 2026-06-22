@@ -58,6 +58,8 @@ Accounting is deterministic and conservative:
 
 - unknown material costs are never treated as zero
 - unknown material costs make a decision ineligible
+- known-cost ledger entries must explicitly set every cost field, even when
+  net value is pending
 - ordinary cost components may not be negative
 - fees, slippage, shipping, holding costs, refunds, return losses,
   cancellations, and research/API costs are explicit
@@ -65,7 +67,7 @@ Accounting is deterministic and conservative:
 - drawdown is calculated from an ordered value curve
 - resolved entries require a mechanically defined no-action outcome
 - realized net value must reconcile to realized gross value minus realized
-  costs
+  costs, and realized costs may not be unknown
 - value summaries preserve the no-action comparator and group by contract,
   strategy, and source
 - multiple decisions from one economic event are counted as one opportunity
@@ -86,3 +88,9 @@ data-quality gaps, and the non-causal historical-comparison boundary.
 
 The adapter selects `abstain` in this wave. It records shadow-policy preparation
 as provenance only and never mutates seller state.
+
+## Storage Boundary
+
+Contract IDs used by `MoneyStorage` must be simple filename tokens containing
+only letters, numbers, underscores, and hyphens. Path separators and traversal
+segments are rejected before contract files are read or written.

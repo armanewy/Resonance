@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from behavior_lab.money.contracts import FinancialDecisionContract
@@ -22,12 +23,12 @@ class MoneyStorage:
         return MoneyLedger(str(self.ledger_path))
 
     def write_contract(self, contract: FinancialDecisionContract) -> Path:
-        path = self.contracts_dir / f"{contract.contract_id}.json"
+        path = self._contract_path(contract.contract_id)
         _write_json(path, {**contract.to_dict(), "contract_hash": contract.contract_hash()})
         return path
 
     def read_contract(self, contract_id: str) -> FinancialDecisionContract:
-        payload = json.loads((self.contracts_dir / f"{contract_id}.json").read_text(encoding="utf-8"))
+        payload = json.loads(self._contract_path(contract_id).read_text(encoding="utf-8"))
         payload.pop("contract_hash", None)
         from behavior_lab.money.contracts import Action
 
@@ -39,6 +40,17 @@ class MoneyStorage:
         for path in sorted(self.contracts_dir.glob("*.json")):
             output.append(json.loads(path.read_text(encoding="utf-8")))
         return output
+
+    def _contract_path(self, contract_id: str) -> Path:
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", contract_id):
+            raise ValueError("contract_id must be a safe filename token")
+        path = (self.contracts_dir / f"{contract_id}.json").resolve()
+        contracts_root = self.contracts_dir.resolve()
+        try:
+            path.relative_to(contracts_root)
+        except ValueError as exc:
+            raise ValueError("contract path escapes the contracts directory") from exc
+        return path
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:

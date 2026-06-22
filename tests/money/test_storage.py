@@ -48,6 +48,33 @@ class MoneyStorageTests(unittest.TestCase):
             self.assertEqual(loaded.contract_hash(), contract.contract_hash())
             self.assertTrue(storage.ledger.verify())
 
+    def test_contract_storage_rejects_path_traversal_ids(self) -> None:
+        contract = FinancialDecisionContract(
+            contract_id="../escaped_contract",
+            domain="seller",
+            target={"metric": "margin"},
+            decision_horizon="1d",
+            decision_deadline="2026-01-02T00:00:00+00:00",
+            available_actions=[Action(action_id="abstain", action_type="no_action")],
+            no_action_id="abstain",
+            payoff_specification={"metric": "net"},
+            cost_policy={"unknown": "ineligible"},
+            risk_policy={"paper_only": True},
+            liquidity_policy={"not_applicable": True},
+            resolution_source={"source": "fixture"},
+            data_cutoff_policy={"as_of": "decision"},
+            prospective_requirement={"required": True},
+            notification_threshold={"enabled": False},
+            paper_only=True,
+            contract_version="v1",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = MoneyStorage(tmp)
+            with self.assertRaises(ValueError):
+                storage.write_contract(contract)
+            with self.assertRaises(ValueError):
+                storage.read_contract("../escaped_contract")
+
 
 if __name__ == "__main__":
     unittest.main()

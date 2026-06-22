@@ -138,13 +138,13 @@ class MoneyLedgerEntry:
         for field_name in ("capital_required", "maximum_possible_loss", "uncertainty_adjustment"):
             if float(getattr(self, field_name)) < 0:
                 raise MoneyLedgerError(f"{field_name} may not be negative")
+        unknown_cost_fields = [field_name for field_name in MATERIAL_ENTRY_COST_FIELDS if getattr(self, field_name) is None]
+        if self.material_costs_known and unknown_cost_fields:
+            raise MoneyLedgerError(f"known-cost entries must explicitly set cost fields: {unknown_cost_fields}")
         if not self.material_costs_known and self.conservative_expected_net_value is not None:
             raise MoneyLedgerError("unknown material costs make conservative net value ineligible")
         if not self.material_costs_known and not self.ineligibility_reasons:
             raise MoneyLedgerError("ineligible entries must explain missing material costs")
-        unknown_cost_fields = [field_name for field_name in MATERIAL_ENTRY_COST_FIELDS if getattr(self, field_name) is None]
-        if self.material_costs_known and self.conservative_expected_net_value is not None and unknown_cost_fields:
-            raise MoneyLedgerError(f"known-cost entries must explicitly set cost fields: {unknown_cost_fields}")
         if self.evidence_state in RESOLVED_STATES:
             if self.resolution is None or self.realized_gross_value is None or self.realized_net_value is None:
                 raise MoneyLedgerError("resolved entries require resolution and realized values")
@@ -278,10 +278,13 @@ def _validate_realized_resolution(
     costs = resolution.get("realized_costs")
     if not isinstance(costs, dict) or not costs:
         raise MoneyLedgerError("resolved entries require non-empty resolution.realized_costs")
-    negative = [field for field, value in costs.items() if value is not None and float(value) < 0]
+    missing = [field for field, value in costs.items() if value is None]
+    if missing:
+        raise MoneyLedgerError(f"realized costs may not be unknown: {sorted(missing)}")
+    negative = [field for field, value in costs.items() if float(value) < 0]
     if negative:
         raise MoneyLedgerError(f"realized costs may not be negative: {sorted(negative)}")
-    expected_net = round(float(realized_gross_value) - sum(float(value or 0.0) for value in costs.values()), 2)
+    expected_net = round(float(realized_gross_value) - sum(float(value) for value in costs.values()), 2)
     if round(float(realized_net_value), 2) != expected_net:
         raise MoneyLedgerError("realized_net_value must equal realized_gross_value minus realized_costs")
 
