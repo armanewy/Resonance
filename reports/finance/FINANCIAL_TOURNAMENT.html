@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Financial Evidence Tournament</title>
+  <style>
+    body { font-family: Arial, sans-serif; color: #1f2933; margin: 2rem; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0 2rem; }
+    th, td { border: 1px solid #cbd5df; padding: 0.5rem; text-align: left; vertical-align: top; }
+    th { background: #eef3f8; }
+    code { background: #f4f6f8; padding: 0.1rem 0.25rem; }
+  </style>
+</head>
+<body>
+  <h1>Financial Evidence Tournament</h1>
+  <p>Schema: <code>finance_tournament.v1</code></p>
+  <p>Generated at: <code>2026-07-05T12:00:00+00:00</code></p>
+  <p>Top-level result: <strong>CONTINUE_MULTIPLE_CANARIES</strong></p>
+  <p>Selected wedge: <strong>None</strong></p>
+  <h2>Contracts</h2>
+  <table>
+    <thead><tr><th>Contract</th><th>Classification</th><th>Candidates</th><th>Value</th><th>Final Evidence</th></tr></thead>
+    <tbody><tr><td>etf_risk</td><td>CONTINUE_PAPER_RESEARCH</td><td>66</td><td>{&quot;presented_as_realized_pnl&quot;: false, &quot;realized_paper_value&quot;: 0.0, &quot;total_value_used_for_ranking&quot;: 86692.22, &quot;unresolved_conservative_expected_value&quot;: 86692.22}</td><td>False</td></tr><tr><td>offerlab_seller_pilot</td><td>CONTINUE_PAPER_RESEARCH</td><td>2</td><td>{&quot;presented_as_realized_pnl&quot;: false, &quot;realized_paper_value&quot;: 0.0, &quot;total_value_used_for_ranking&quot;: 30.0, &quot;unresolved_conservative_expected_value&quot;: 30.0}</td><td>False</td></tr><tr><td>weather_edge</td><td>DATA_STARVED</td><td>1</td><td>{&quot;presented_as_realized_pnl&quot;: false, &quot;realized_paper_value&quot;: 2.15, &quot;total_value_used_for_ranking&quot;: 2.15, &quot;unresolved_conservative_expected_value&quot;: 0.0}</td><td>False</td></tr></tbody>
+  </table>
+  <h2>Guardrails</h2>
+  <ul><li>concentration penalized: PASS</li>
+<li>does not reward gross edge before costs: PASS</li>
+<li>incomplete seller cost accounting blocks eligibility: PASS</li>
+<li>one off gains not sufficient: PASS</li>
+<li>paper pnl not realized pnl: PASS</li>
+<li>strategy churn penalized: PASS</li>
+<li>unavailable executable prices rejected: PASS</li>
+<li>winner not selected from synthetic tests: PASS</li></ul>
+  <h2>Rationale</h2>
+  <pre>[
+  &quot;All current evidence is fixture or immature paper evidence.&quot;,
+  &quot;No contract has enough prospective canary evidence for commercial selection.&quot;,
+  &quot;No winner is selected from synthetic tests.&quot;
+]</pre>
+</body>
+</html>

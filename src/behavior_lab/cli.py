@@ -529,6 +529,18 @@ def command_money_canary(args: argparse.Namespace) -> None:
     _print_json(payload)
 
 
+def command_money_tournament(args: argparse.Namespace) -> None:
+    from behavior_lab.money.tournament import run_financial_tournament
+
+    payload = run_financial_tournament(
+        output_dir=args.output_dir,
+        docs_dir=args.docs_dir,
+        workspace=args.workspace,
+        generated_at=args.generated_at,
+    )
+    _print_json(payload)
+
+
 def _write_json_output(output: str | None, payload: dict[str, Any]) -> None:
     if output:
         path = Path(output)
@@ -913,6 +925,15 @@ def build_parser() -> argparse.ArgumentParser:
     money_canary_invalidate.add_argument("--as-of")
     money_canary_invalidate.add_argument("--output")
     money_canary_invalidate.set_defaults(func=command_money_canary)
+
+    money_tournament = money_subparsers.add_parser("tournament", help="Run the paper-only financial evidence tournament")
+    money_tournament_subparsers = money_tournament.add_subparsers(dest="money_tournament_command", required=True)
+    money_tournament_run = money_tournament_subparsers.add_parser("run", help="Write FINANCIAL_TOURNAMENT reports and wedge decision")
+    money_tournament_run.add_argument("--output-dir", default="reports/finance")
+    money_tournament_run.add_argument("--docs-dir", default="docs/finance")
+    money_tournament_run.add_argument("--workspace")
+    money_tournament_run.add_argument("--generated-at", default="2026-07-05T12:00:00+00:00")
+    money_tournament_run.set_defaults(func=command_money_tournament)
 
     benchmark_parser = subparsers.add_parser("benchmark", help="Federated benchmark utilities")
     benchmark_subparsers = benchmark_parser.add_subparsers(dest="benchmark_command", required=True)
