@@ -599,11 +599,68 @@ def command_money_contract_scout(args: argparse.Namespace) -> None:
     _print_json(payload)
 
 
+def command_money_data_mesh(args: argparse.Namespace) -> None:
+    from behavior_lab.finance_data.data_mesh import FinancialDataMesh, load_fixture, load_manifest, load_manifests
+
+    mesh = FinancialDataMesh(args.state_dir)
+    command = args.data_mesh_command
+    if command == "validate-manifest":
+        payload = mesh.validate_manifest(load_manifest(args.manifest))
+    elif command == "trial":
+        payload = mesh.trial_manifest(load_manifest(args.manifest), fixture_payload=load_fixture(args.fixture), fixture_name=Path(args.fixture).name)
+    elif command == "activate":
+        payload = mesh.activate_manifest(load_manifest(args.manifest), fixture_payload=load_fixture(args.fixture), fixture_name=Path(args.fixture).name)
+    elif command == "acquire":
+        fixtures = _load_json_file(args.fixtures_json) if args.fixtures_json else {}
+        source_catalog = _load_json_file(args.source_catalog_json) if args.source_catalog_json else []
+        payload = mesh.acquire(
+            contract_proposals=_load_json_file(args.contracts_json),
+            manifests=load_manifests(args.manifests_json),
+            fixtures_by_source=fixtures,
+            source_catalog=source_catalog,
+            search_budget=args.search_budget,
+            llm_budget_usd=args.llm_budget_usd,
+        )
+    elif command == "repair":
+        payload = mesh.repair_source(
+            args.source_id,
+            failure=_load_json_file(args.failure_json),
+            candidate_manifest=load_manifest(args.candidate_manifest),
+            fixture_payload=load_fixture(args.fixture),
+        )
+    elif command == "backfill-plan":
+        payload = mesh.backfill_plan(
+            source_id=args.source_id,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            chunk_days=args.chunk_days,
+            completed_chunk_ids=_parse_csv_strings(args.completed_chunks) if args.completed_chunks else [],
+        )
+    elif command == "connector-audit":
+        payload = mesh.audit_generated_connector(
+            source_id=args.source_id,
+            manifest_hash=args.manifest_hash,
+            code=Path(args.code_file).read_text(encoding="utf-8"),
+        )
+    elif command == "classify":
+        payload = mesh.classify_source_value(source_id=args.source_id, metrics=_load_json_file(args.metrics_json))
+    elif command == "catalog":
+        payload = mesh.catalog()
+    else:
+        raise SystemExit(f"unsupported data-mesh command: {command}")
+    _write_json_output(getattr(args, "output", None), payload)
+    _print_json(payload)
+
+
 def _write_json_output(output: str | None, payload: dict[str, Any]) -> None:
     if output:
         path = Path(output)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _load_json_file(path: str | Path) -> Any:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 def _require_demo_fixture(enabled: bool) -> None:
@@ -974,6 +1031,73 @@ def build_parser() -> argparse.ArgumentParser:
     contract_scout_reject.add_argument("--reason", default="manual_rejection")
     contract_scout_reject.add_argument("--output")
     contract_scout_reject.set_defaults(func=command_money_contract_scout)
+
+    money_data_mesh = money_subparsers.add_parser("data-mesh", help="Manage the experimental financial data mesh")
+    money_data_mesh_subparsers = money_data_mesh.add_subparsers(dest="data_mesh_command", required=True)
+
+    data_mesh_validate = money_data_mesh_subparsers.add_parser("validate-manifest", help="Validate one declarative source manifest")
+    data_mesh_validate.add_argument("--state-dir", default=".money_data_mesh")
+    data_mesh_validate.add_argument("--manifest", required=True)
+    data_mesh_validate.add_argument("--output")
+    data_mesh_validate.set_defaults(func=command_money_data_mesh)
+
+    for data_mesh_command in ("trial", "activate"):
+        data_mesh_parser = money_data_mesh_subparsers.add_parser(data_mesh_command, help=f"{data_mesh_command} one declarative source manifest with a fixture")
+        data_mesh_parser.add_argument("--state-dir", default=".money_data_mesh")
+        data_mesh_parser.add_argument("--manifest", required=True)
+        data_mesh_parser.add_argument("--fixture", required=True)
+        data_mesh_parser.add_argument("--output")
+        data_mesh_parser.set_defaults(func=command_money_data_mesh)
+
+    data_mesh_acquire = money_data_mesh_subparsers.add_parser("acquire", help="Acquire missing source families into the experimental catalog")
+    data_mesh_acquire.add_argument("--state-dir", default=".money_data_mesh")
+    data_mesh_acquire.add_argument("--contracts-json", required=True)
+    data_mesh_acquire.add_argument("--manifests-json", required=True)
+    data_mesh_acquire.add_argument("--fixtures-json")
+    data_mesh_acquire.add_argument("--source-catalog-json")
+    data_mesh_acquire.add_argument("--search-budget", type=int, default=8)
+    data_mesh_acquire.add_argument("--llm-budget-usd", type=float, default=0.0)
+    data_mesh_acquire.add_argument("--output")
+    data_mesh_acquire.set_defaults(func=command_money_data_mesh)
+
+    data_mesh_repair = money_data_mesh_subparsers.add_parser("repair", help="Repair or substitute an experimental source version")
+    data_mesh_repair.add_argument("source_id", metavar="SOURCE_ID")
+    data_mesh_repair.add_argument("--state-dir", default=".money_data_mesh")
+    data_mesh_repair.add_argument("--failure-json", required=True)
+    data_mesh_repair.add_argument("--candidate-manifest", required=True)
+    data_mesh_repair.add_argument("--fixture", required=True)
+    data_mesh_repair.add_argument("--output")
+    data_mesh_repair.set_defaults(func=command_money_data_mesh)
+
+    data_mesh_backfill = money_data_mesh_subparsers.add_parser("backfill-plan", help="Plan a resumable progressive source backfill")
+    data_mesh_backfill.add_argument("source_id", metavar="SOURCE_ID")
+    data_mesh_backfill.add_argument("--state-dir", default=".money_data_mesh")
+    data_mesh_backfill.add_argument("--start-date", required=True)
+    data_mesh_backfill.add_argument("--end-date", required=True)
+    data_mesh_backfill.add_argument("--chunk-days", type=_positive, default=7)
+    data_mesh_backfill.add_argument("--completed-chunks")
+    data_mesh_backfill.add_argument("--output")
+    data_mesh_backfill.set_defaults(func=command_money_data_mesh)
+
+    data_mesh_connector = money_data_mesh_subparsers.add_parser("connector-audit", help="Audit generated connector code in sandbox-only mode")
+    data_mesh_connector.add_argument("source_id", metavar="SOURCE_ID")
+    data_mesh_connector.add_argument("--state-dir", default=".money_data_mesh")
+    data_mesh_connector.add_argument("--manifest-hash", required=True)
+    data_mesh_connector.add_argument("--code-file", required=True)
+    data_mesh_connector.add_argument("--output")
+    data_mesh_connector.set_defaults(func=command_money_data_mesh)
+
+    data_mesh_classify = money_data_mesh_subparsers.add_parser("classify", help="Classify experimental source marginal value")
+    data_mesh_classify.add_argument("source_id", metavar="SOURCE_ID")
+    data_mesh_classify.add_argument("--state-dir", default=".money_data_mesh")
+    data_mesh_classify.add_argument("--metrics-json", required=True)
+    data_mesh_classify.add_argument("--output")
+    data_mesh_classify.set_defaults(func=command_money_data_mesh)
+
+    data_mesh_catalog = money_data_mesh_subparsers.add_parser("catalog", help="List experimental data mesh sources")
+    data_mesh_catalog.add_argument("--state-dir", default=".money_data_mesh")
+    data_mesh_catalog.add_argument("--output")
+    data_mesh_catalog.set_defaults(func=command_money_data_mesh)
 
     money_canary = money_subparsers.add_parser("canary", help="Manage immutable prospective paper canaries")
     money_canary_subparsers = money_canary.add_subparsers(dest="canary_command", required=True)

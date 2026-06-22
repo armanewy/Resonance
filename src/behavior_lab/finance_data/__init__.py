@@ -23,6 +23,16 @@ from behavior_lab.finance_data.contracts import (
     observation_kind,
     source_artifact_hash,
 )
+from behavior_lab.finance_data.data_mesh import (
+    DATA_MESH_SCHEMA_VERSION,
+    SUPPORTED_ADAPTER_TYPES,
+    DataMeshError,
+    DeclarativeSourceManifest,
+    FinancialDataMesh,
+    ManifestValidation,
+    ManifestValidator,
+    NormalizedSeriesDefinition,
+)
 from behavior_lab.finance_data.source_proposals import SourceProposal
 from behavior_lab.finance_data.store import AsOfQuery, AsOfResult, FinanceDataStore, session_event_time
 
@@ -35,10 +45,16 @@ __all__ = [
     "CashRiskFreeBenchmark",
     "CorporateAction",
     "DailyBar",
+    "DATA_MESH_SCHEMA_VERSION",
+    "DataMeshError",
+    "DeclarativeSourceManifest",
     "Distribution",
     "EconomicRelease",
     "FinanceDataError",
     "FinanceDataStore",
+    "FinancialDataMesh",
+    "ManifestValidation",
+    "ManifestValidator",
     "MarketCalendar",
     "MarketSessionStatus",
     "MarketValueKind",
@@ -48,8 +64,10 @@ __all__ = [
     "RevisionRecord",
     "SettlementEvent",
     "SourceProposal",
+    "SUPPORTED_ADAPTER_TYPES",
     "Trade",
     "VintageSnapshot",
+    "NormalizedSeriesDefinition",
     "effective_available_at",
     "observation_hash",
     "observation_kind",
