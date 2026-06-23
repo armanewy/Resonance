@@ -4,7 +4,7 @@ Active line:
 
 ```text
 branch: product/resonance-app
-commit: 5ad2aa2c4793af4532bed17bce1eb11f75694193
+required ancestor: f7e3b34b2d54dcaf3cecbe0e59517bea36a090aa
 ```
 
 Goal:
@@ -29,11 +29,11 @@ This creates an operator log under:
 data\science\operator_logs\latency_YYYYMMDD_HHMMSS\
 ```
 
-The dry rehearsal verifies the branch and commit, audits the collector, verifies
-the ledger, runs a scanner dry-run, creates a snapshot when enough local rows
-exist, generates deterministic file-provider hypotheses, approves only
-review-accepted hypotheses, fits them, and runs tuning. It does not preregister
-or spend the blind budget.
+The dry rehearsal verifies the branch and required lineage, audits the
+collector, verifies the ledger, runs a scanner dry-run, creates a snapshot when
+enough local rows exist, generates deterministic file-provider hypotheses,
+approves only review-accepted hypotheses, fits them, and runs tuning. It does
+not preregister or spend the blind budget.
 
 `-AllowEarly` uses an identity target transform and zero maximum lag so it can
 exercise the operator path before several days of regular observations exist.
@@ -82,6 +82,10 @@ snapshot or selected candidate. The blind helper reads the existing
 `operator_result.json`, preregisters the exact `selected_candidate_id`, runs
 one blind evaluation, writes the report, verifies the ledger, and updates the
 same operator result.
+
+The blind helper requires the current Git commit to match the commit recorded
+by the run that selected the tuning winner. This keeps tuning and blind
+evaluation tied to the same code path.
 
 ## Do Not Do
 

@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory = $true)][string]$RunDir,
     [switch]$ConfirmBlindSpend,
     [string]$ExpectedBranch = "product/resonance-app",
-    [string]$ExpectedCommit = "5ad2aa2c4793af4532bed17bce1eb11f75694193"
+    [string]$RequiredAncestorCommit = "f7e3b34b2d54dcaf3cecbe0e59517bea36a090aa"
 )
 
 $ErrorActionPreference = "Stop"
@@ -52,6 +52,12 @@ function Add-CommandRecord {
     $Result.commands = $records
 }
 
+function Test-GitAncestor {
+    param([string]$AncestorCommit)
+    & git merge-base --is-ancestor $AncestorCommit HEAD *> $null
+    return ($LASTEXITCODE -eq 0)
+}
+
 if (-not $ConfirmBlindSpend) {
     throw "Refusing to spend blind budget without -ConfirmBlindSpend."
 }
@@ -70,8 +76,14 @@ $commit = (git rev-parse HEAD).Trim()
 if ($branch -ne $ExpectedBranch) {
     throw "Expected branch $ExpectedBranch but found $branch."
 }
-if ($commit -ne $ExpectedCommit) {
-    throw "Expected commit $ExpectedCommit but found $commit."
+if (-not (Test-GitAncestor -AncestorCommit $RequiredAncestorCommit)) {
+    throw "Current HEAD $commit does not descend from required ancestor $RequiredAncestorCommit."
+}
+if ([string]::IsNullOrWhiteSpace([string]$result.commit)) {
+    throw "operator_result.json does not record the driver commit."
+}
+if ($commit -ne [string]$result.commit) {
+    throw "Current commit $commit does not match the run commit $($result.commit). Re-check out the exact commit that selected the tuning winner."
 }
 if ($result.status -ne "TUNING_WINNER_SELECTED") {
     throw "Run status must be TUNING_WINNER_SELECTED before blind spend; found $($result.status)."

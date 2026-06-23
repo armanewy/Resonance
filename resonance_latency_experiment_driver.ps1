@@ -7,7 +7,7 @@ param(
     [int]$AuditHours = 24,
     [int]$ScanHours = 168,
     [string]$ExpectedBranch = "product/resonance-app",
-    [string]$ExpectedCommit = "5ad2aa2c4793af4532bed17bce1eb11f75694193"
+    [string]$RequiredAncestorCommit = "f7e3b34b2d54dcaf3cecbe0e59517bea36a090aa"
 )
 
 $ErrorActionPreference = "Stop"
@@ -57,6 +57,12 @@ function Add-CommandRecord {
         output_path = $CommandResult.path
     }
     $Result["commands"] = $records
+}
+
+function Test-GitAncestor {
+    param([string]$AncestorCommit)
+    & git merge-base --is-ancestor $AncestorCommit HEAD *> $null
+    return ($LASTEXITCODE -eq 0)
 }
 
 function New-LinearHypothesis {
@@ -287,7 +293,7 @@ $result = [ordered]@{
     branch = $branch
     commit = $commit
     expected_branch = $ExpectedBranch
-    expected_commit = $ExpectedCommit
+    required_ancestor_commit = $RequiredAncestorCommit
     blind_budget_spent = $false
     commands = @()
     warnings = @()
@@ -300,12 +306,14 @@ if ($branch -ne $ExpectedBranch) {
     Write-OperatorResult -Result $result -Path $resultPath
     throw $result.error
 }
-if ($commit -ne $ExpectedCommit) {
-    $result.status = "WRONG_COMMIT"
-    $result.error = "Expected commit $ExpectedCommit but found $commit."
+if (-not (Test-GitAncestor -AncestorCommit $RequiredAncestorCommit)) {
+    $result.status = "WRONG_LINEAGE"
+    $result.error = "Current HEAD $commit does not descend from required ancestor $RequiredAncestorCommit."
     Write-OperatorResult -Result $result -Path $resultPath
     throw $result.error
 }
+$result.lineage_verified = $true
+Write-OperatorResult -Result $result -Path $resultPath
 
 $step = 1
 $auditOut = Join-Path $runDir (New-StepName $step "audit" "json")
